@@ -1,0 +1,10 @@
+.DS_Store
+.env
+.data/
+.backup/
+.claude/
+.agents/
+.pi/
+node_modules/
+dist/
+.pnpm-store/

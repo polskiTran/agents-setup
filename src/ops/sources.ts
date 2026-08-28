@@ -13,6 +13,8 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { diffPaths } from "./sync.ts";
+
 /** One vendored upstream, as recorded in sources.json at the collection root. */
 export type Source = {
   name: string;
@@ -62,37 +64,127 @@ export function addSource(args: { collectionRoot: string; url: string; subpath?:
   try {
     git(["clone", "--depth", "1", url, checkout]);
     const sha = git(["-C", checkout, "rev-parse", "HEAD"]).trim();
-
-    let contentRoot = checkout;
-    if (subpath !== undefined) {
-      contentRoot = path.resolve(checkout, subpath);
-      const inCheckout = contentRoot.startsWith(checkout + path.sep);
-      if (!inCheckout || !existsSync(contentRoot) || !statSync(contentRoot).isDirectory()) {
-        throw new Error(`Subpath "${subpath}" is not a directory inside ${url}`);
-      }
-    }
-    rmSync(path.join(checkout, ".git"), { recursive: true, force: true });
+    const contentRoot = materializeContent(checkout, url, subpath);
 
     const vendorDir = path.join(collectionRoot, "vendor", name);
     rmSync(vendorDir, { recursive: true, force: true });
     mkdirSync(path.dirname(vendorDir), { recursive: true });
     cpSync(contentRoot, vendorDir, { recursive: true });
 
-    let license = findLicense(vendorDir);
-    if (license.kind === "missing" && subpath !== undefined) {
-      const repoRoot = findLicense(checkout);
-      if (repoRoot.kind === "found") {
-        cpSync(path.join(checkout, repoRoot.file), path.join(vendorDir, repoRoot.file));
-        license = findLicense(vendorDir);
-      }
-    }
-
     const source: Source = { name, url, sha, ...(subpath === undefined ? {} : { subpath }) };
     writeSources(collectionRoot, [...sources, source]);
-    return { source, vendorDir, license };
+    return { source, vendorDir, license: findLicense(vendorDir) };
   } finally {
     rmSync(checkout, { recursive: true, force: true });
   }
+}
+
+export type PullPreview =
+  | { kind: "up-to-date"; source: Source }
+  | {
+      kind: "changed";
+      source: Source;
+      upstreamSha: string;
+      diff: string;
+      vendorDir: string;
+      contentRoot: string;
+      apply: () => Source;
+      discard: () => void;
+    };
+
+/**
+ * Prepares an upstream pull without writing anything: fresh shallow clone,
+ * upstream HEAD resolved, and the diff between the vendored copy and upstream
+ * computed (subpath respected). The caller reviews the diff and then either
+ * apply() — overwrite the vendored copy, bump the sha in sources.json, clean
+ * up — or discard(), which changes nothing, including the sha. An unreachable
+ * upstream throws with the vendored copy and sources.json intact.
+ */
+export function pullSource(args: { collectionRoot: string; name: string }): PullPreview {
+  const { collectionRoot, name } = args;
+  const source = readSources(collectionRoot).find((entry) => entry.name === name);
+  if (source === undefined) {
+    throw new Error(`Unknown source "${name}" — it is not recorded in sources.json`);
+  }
+  const vendorDir = path.join(collectionRoot, "vendor", name);
+
+  const checkout = mkdtempSync(path.join(tmpdir(), "polskills-pull-"));
+  const discard = (): void => rmSync(checkout, { recursive: true, force: true });
+  try {
+    try {
+      git(["clone", "--depth", "1", source.url, checkout]);
+    } catch (error) {
+      throw new Error(`Cannot reach upstream ${source.url} — vendored copy left untouched (${errorDetail(error)})`);
+    }
+    const upstreamSha = git(["-C", checkout, "rev-parse", "HEAD"]).trim();
+    if (upstreamSha === source.sha) {
+      discard();
+      return { kind: "up-to-date", source };
+    }
+    const contentRoot = materializeContent(checkout, source.url, source.subpath);
+    const diff = diffPaths({ collectionPath: vendorDir, projectPath: contentRoot });
+    return {
+      kind: "changed",
+      source,
+      upstreamSha,
+      diff,
+      vendorDir,
+      contentRoot,
+      apply: () => {
+        rmSync(vendorDir, { recursive: true, force: true });
+        mkdirSync(path.dirname(vendorDir), { recursive: true });
+        cpSync(contentRoot, vendorDir, { recursive: true });
+        const updated: Source = { ...source, sha: upstreamSha };
+        writeSources(
+          collectionRoot,
+          readSources(collectionRoot).map((entry) => (entry.name === name ? updated : entry)),
+        );
+        discard();
+        return updated;
+      },
+      discard,
+    };
+  } catch (error) {
+    discard();
+    throw error;
+  }
+}
+
+/**
+ * Turns a fresh checkout into vendorable content: strips .git, resolves the
+ * subpath subtree when set, and copies the repo-root LICENSE into a subpath
+ * content root that lacks its own, so attribution travels with the copy.
+ */
+function materializeContent(checkout: string, url: string, subpath: string | undefined): string {
+  let contentRoot = checkout;
+  if (subpath !== undefined) {
+    contentRoot = path.resolve(checkout, subpath);
+    const inCheckout = contentRoot.startsWith(checkout + path.sep);
+    if (!inCheckout || !existsSync(contentRoot) || !statSync(contentRoot).isDirectory()) {
+      throw new Error(`Subpath "${subpath}" is not a directory inside ${url}`);
+    }
+  }
+  rmSync(path.join(checkout, ".git"), { recursive: true, force: true });
+  if (subpath !== undefined && findLicense(contentRoot).kind === "missing") {
+    const repoRoot = findLicense(checkout);
+    if (repoRoot.kind === "found") {
+      cpSync(path.join(checkout, repoRoot.file), path.join(contentRoot, repoRoot.file));
+    }
+  }
+  return contentRoot;
+}
+
+function errorDetail(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "stderr" in error &&
+    typeof error.stderr === "string" &&
+    error.stderr.trim() !== ""
+  ) {
+    return error.stderr.trim().split("\n").at(-1) ?? "";
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Every recorded source joined with the license found in its vendored copy. */

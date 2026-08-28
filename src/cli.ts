@@ -1,8 +1,13 @@
 #!/usr/bin/env node
-import { intro, isCancel, log, outro, select, spinner, text } from "@clack/prompts";
+import { confirm, groupMultiselect, intro, isCancel, log, multiselect, outro, select, spinner, text } from "@clack/prompts";
 
 import { findCollectionRoot } from "./ops/collection-root.ts";
-import { addSource, listSources, parseUpstreamUrl, type LicenseInfo } from "./ops/sources.ts";
+import { addSource, listSources, parseUpstreamUrl, pullSource, readSources, type LicenseInfo } from "./ops/sources.ts";
+import { projectStatus, type StatusEntry } from "./ops/status.ts";
+import { addAssetToProject, initProject, removeAssetFromProject } from "./ops/provision.ts";
+import { adoptIntoMine, diffPaths, writeBackToCollection } from "./ops/sync.ts";
+import { discoverCollectionAssets, type CollectionAsset, type Owner } from "./ops/catalog.ts";
+import { spawnSync } from "node:child_process";
 
 const collectionRoot = findCollectionRoot(import.meta.dirname);
 const projectDir = process.cwd();
@@ -10,6 +15,7 @@ const projectDir = process.cwd();
 intro("polskills");
 log.info(`Collection  ${collectionRoot}`);
 log.info(`Project     ${projectDir}`);
+renderStatus();
 
 if (!process.stdin.isTTY) {
   outro("The menu needs an interactive terminal — run polskills directly in one.");
@@ -20,13 +26,25 @@ while (true) {
   const action = await select({
     message: "What do you want to do?",
     options: [
+      { value: "status", label: "Project status", hint: "re-run the sync view" },
+      { value: "resolve", label: "Diff & resolve", hint: "handle differing and project-only assets" },
+      { value: "add-assets", label: "Add assets", hint: "provision skills/agents into this project" },
+      { value: "remove-assets", label: "Remove assets", hint: "delete provisioned assets from this project" },
+      { value: "init", label: "Init project", hint: ".agents/ areas + .claude symlinks" },
       { value: "add-upstream", label: "Add upstream", hint: "vendor a skills repo by URL" },
+      { value: "pull-upstream", label: "Pull upstream", hint: "review and apply upstream changes" },
       { value: "list-sources", label: "List sources", hint: "vendored upstreams and licenses" },
       { value: "exit", label: "Exit" },
     ],
   });
   if (isCancel(action) || action === "exit") break;
+  if (action === "status") renderStatus();
+  if (action === "resolve") await runResolve();
+  if (action === "add-assets") await runAddAssets();
+  if (action === "remove-assets") await runRemoveAssets();
+  if (action === "init") runInit();
   if (action === "add-upstream") await runAddUpstream();
+  if (action === "pull-upstream") await runPullUpstream();
   if (action === "list-sources") runListSources();
 }
 
@@ -65,6 +83,48 @@ async function runAddUpstream(): Promise<void> {
   }
 }
 
+async function runPullUpstream(): Promise<void> {
+  const sources = readSources(collectionRoot);
+  if (sources.length === 0) {
+    log.info("No sources vendored yet.");
+    return;
+  }
+  const name = await select({
+    message: "Pull which source?",
+    options: sources.map((source) => ({ value: source.name, label: `${source.name}  @ ${source.sha.slice(0, 7)}` })),
+  });
+  if (isCancel(name)) return;
+
+  const progress = spinner();
+  progress.start(`Fetching ${name}`);
+  let preview;
+  try {
+    preview = pullSource({ collectionRoot, name });
+  } catch (error) {
+    progress.stop("Pull failed", 1);
+    log.error(error instanceof Error ? error.message : String(error));
+    return;
+  }
+  if (preview.kind === "up-to-date") {
+    progress.stop(`${name} is already up to date @ ${preview.source.sha.slice(0, 7)}`);
+    return;
+  }
+  progress.stop(`${name}: ${preview.source.sha.slice(0, 7)} → ${preview.upstreamSha.slice(0, 7)}`);
+  if (preview.diff === "") {
+    log.info("No content changes — applying only bumps the pinned sha.");
+  } else {
+    showDiff(preview.vendorDir, preview.contentRoot);
+  }
+  const approved = await confirm({ message: `Apply this update to ${name}?` });
+  if (isCancel(approved) || !approved) {
+    preview.discard();
+    log.info("Declined — nothing changed.");
+    return;
+  }
+  const updated = preview.apply();
+  log.info(`${name} updated to ${updated.sha.slice(0, 7)}.`);
+}
+
 function runListSources(): void {
   const entries = listSources(collectionRoot);
   if (entries.length === 0) {
@@ -78,6 +138,174 @@ function runListSources(): void {
       `${source.name}  @ ${source.sha.slice(0, 7)}${subpath}\n${source.url}\n${licenseText}`,
     );
   }
+}
+
+function runInit(): void {
+  const outcomes = initProject(projectDir);
+  for (const { link, outcome } of outcomes) {
+    if (outcome === "conflict") {
+      log.warn(`${link} already exists and is not the expected symlink — left untouched`);
+    } else {
+      log.info(`${link}: ${outcome}`);
+    }
+  }
+}
+
+async function runAddAssets(): Promise<void> {
+  const assets = discoverCollectionAssets(collectionRoot);
+  if (assets.length === 0) {
+    log.info("The collection has no assets yet — add an upstream or write a skill first.");
+    return;
+  }
+  const groups: Record<string, { value: CollectionAsset; label: string }[]> = {};
+  for (const asset of assets) {
+    (groups[ownerLabel(asset.owner)] ??= []).push({
+      value: asset,
+      label: `${asset.name}  (${asset.kind})`,
+    });
+  }
+  const chosen = await groupMultiselect({
+    message: "Assets to add to this project",
+    options: groups,
+    required: false,
+  });
+  if (isCancel(chosen) || chosen.length === 0) return;
+  for (const asset of chosen) addAssetToProject({ projectDir, asset });
+  log.info(`Added ${chosen.length} asset(s).`);
+  renderStatus();
+}
+
+async function runRemoveAssets(): Promise<void> {
+  const provisioned = projectStatus({ collectionRoot, projectDir }).filter(
+    (entry) => entry.state !== "collection-only",
+  );
+  if (provisioned.length === 0) {
+    log.info("Nothing is provisioned in this project.");
+    return;
+  }
+  const chosen = await multiselect({
+    message: "Assets to remove from this project",
+    options: provisioned.map((entry, index) => ({
+      value: index,
+      label: `${entry.name}  (${entry.kind}, ${entry.state})`,
+    })),
+    required: false,
+  });
+  if (isCancel(chosen) || chosen.length === 0) return;
+  for (const index of chosen) {
+    const entry = provisioned[index];
+    if (entry !== undefined) removeAssetFromProject({ projectDir, kind: entry.kind, name: entry.name });
+  }
+  log.info(`Removed ${chosen.length} asset(s).`);
+  renderStatus();
+}
+
+async function runResolve(): Promise<void> {
+  while (true) {
+    const actionable = projectStatus({ collectionRoot, projectDir }).filter(
+      (entry) => entry.state === "differs" || entry.state === "project-only",
+    );
+    if (actionable.length === 0) {
+      log.info("Nothing to resolve — no differing or project-only assets.");
+      return;
+    }
+    const index = await select({
+      message: "Resolve which asset?",
+      options: [
+        ...actionable.map((entry, i) => ({
+          value: i,
+          label: `${entry.name}  (${entry.kind}, ${entry.state}${
+            "asset" in entry ? `, ${ownerLabel(entry.asset.owner)}` : ""
+          })`,
+        })),
+        { value: -1, label: "Back" },
+      ],
+    });
+    if (isCancel(index) || index === -1) return;
+    const entry = actionable[index];
+    if (entry === undefined) continue;
+    if (entry.state === "differs") await resolveDiffers(entry);
+    else if (entry.state === "project-only") await resolveProjectOnly(entry);
+  }
+}
+
+async function resolveDiffers(entry: StatusEntry & { state: "differs" }): Promise<void> {
+  showDiff(entry.asset.path, entry.projectPath);
+  const mine = entry.asset.owner.kind === "mine";
+  const action = await select({
+    message: `${entry.name}: which version wins?`,
+    options: [
+      { value: "overwrite", label: `Use collection version`, hint: "overwrite the project copy" },
+      mine
+        ? { value: "write-back", label: "Keep project version", hint: "write back into my collection" }
+        : { value: "fork", label: "Keep project version", hint: `fork to mine — ${ownerLabel(entry.asset.owner)}'s copy stays untouched` },
+      { value: "skip", label: "Skip" },
+    ],
+  });
+  if (isCancel(action) || action === "skip") return;
+  if (action === "overwrite") {
+    addAssetToProject({ projectDir, asset: entry.asset });
+    log.info(`${entry.name}: project copy replaced with the collection version.`);
+  } else if (action === "write-back") {
+    writeBackToCollection({ asset: entry.asset, projectPath: entry.projectPath });
+    log.info(`${entry.name}: my collection copy now matches the project.`);
+  } else if (action === "fork") {
+    adoptIntoMine({ collectionRoot, kind: entry.kind, name: entry.name, projectPath: entry.projectPath });
+    log.info(`${entry.name}: forked into my collection; the project now tracks your fork.`);
+  }
+}
+
+async function resolveProjectOnly(entry: StatusEntry & { state: "project-only" }): Promise<void> {
+  const action = await select({
+    message: `${entry.name} exists only in this project`,
+    options: [
+      { value: "adopt", label: "Adopt into my collection", hint: "make it reusable everywhere" },
+      { value: "skip", label: "Skip" },
+    ],
+  });
+  if (isCancel(action) || action === "skip") return;
+  adoptIntoMine({ collectionRoot, kind: entry.kind, name: entry.name, projectPath: entry.projectPath });
+  log.info(`${entry.name}: adopted into my collection.`);
+}
+
+/** Renders through hunk when it works, otherwise prints a colored diff — never a hard dependency. */
+function showDiff(collectionPath: string, projectPath: string): void {
+  const plain = diffPaths({ collectionPath, projectPath });
+  if (plain === "") {
+    log.info("No content difference.");
+    return;
+  }
+  try {
+    const result = spawnSync("hunk", [], { input: plain, stdio: ["pipe", "inherit", "inherit"] });
+    if (result.status === 0) return;
+  } catch {
+    // fall through to plain output
+  }
+  process.stdout.write(diffPaths({ collectionPath, projectPath, color: process.stdout.isTTY === true }));
+}
+
+function renderStatus(): void {
+  const entries = projectStatus({ collectionRoot, projectDir });
+  if (entries.length === 0) {
+    log.info("Nothing to show yet — the collection and this project have no assets.");
+    return;
+  }
+  const lines = entries.map((entry) => {
+    const owner = "asset" in entry ? `  (${ownerLabel(entry.asset.owner)})` : "";
+    return `${entry.state.padEnd(15)}  ${entry.kind.padEnd(5)}  ${entry.name}${owner}`;
+  });
+  log.message(lines.join("\n"));
+  log.info(summarize(entries));
+}
+
+function summarize(entries: StatusEntry[]): string {
+  const counts = new Map<StatusEntry["state"], number>();
+  for (const entry of entries) counts.set(entry.state, (counts.get(entry.state) ?? 0) + 1);
+  return [...counts].map(([state, count]) => `${count} ${state}`).join(", ");
+}
+
+function ownerLabel(owner: Owner): string {
+  return owner.kind === "mine" ? "mine" : owner.source;
 }
 
 function reportLicense(name: string, license: LicenseInfo): void {

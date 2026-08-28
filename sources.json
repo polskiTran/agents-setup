@@ -3,5 +3,26 @@
     "name": "mattpocock/skills",
     "url": "https://github.com/mattpocock/skills",
     "sha": "6654f6b60cd9d5be8b54c6fafe44346dabeb3b76"
+  },
+  {
+    "name": "cursor/plugins",
+    "url": "https://github.com/cursor/plugins",
+    "sha": "68836ddaf5697224520f1847d90cdb90ca8babaa",
+    "subpath": "pstack"
+  },
+  {
+    "name": "emilkowalski/skills",
+    "url": "https://github.com/emilkowalski/skills",
+    "sha": "d23d7f88a2e21c9e4b1418c7abe420f5c1052ba7"
+  },
+  {
+    "name": "jakubkrehel/skills",
+    "url": "https://github.com/jakubkrehel/skills",
+    "sha": "ca483852de23d48ab4f4ea71da37dad12bd70a95"
+  },
+  {
+    "name": "humanlayer/skills",
+    "url": "https://github.com/humanlayer/skills",
+    "sha": "3c2629142c5d437428269b1b722b08c0b87f574d"
   }
 ]

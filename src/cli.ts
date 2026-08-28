@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { confirm, groupMultiselect, intro, isCancel, log, multiselect, outro, select, spinner, text } from "@clack/prompts";
+import { confirm, intro, isCancel, log, multiselect, outro, select, spinner, text } from "@clack/prompts";
 
 import { findCollectionRoot } from "./ops/collection-root.ts";
 import { addSource, listSources, parseUpstreamUrl, pullSource, readSources, type LicenseInfo } from "./ops/sources.ts";
@@ -157,22 +157,44 @@ async function runAddAssets(): Promise<void> {
     log.info("The collection has no assets yet — add an upstream or write a skill first.");
     return;
   }
-  const groups: Record<string, { value: CollectionAsset; label: string }[]> = {};
+  const bySource = new Map<string, CollectionAsset[]>();
   for (const asset of assets) {
-    (groups[ownerLabel(asset.owner)] ??= []).push({
-      value: asset,
-      label: `${asset.name}  (${asset.kind})`,
-    });
+    const label = ownerLabel(asset.owner);
+    bySource.set(label, [...(bySource.get(label) ?? []), asset]);
   }
-  const chosen = await groupMultiselect({
-    message: "Assets to add to this project",
-    options: groups,
-    required: false,
-  });
-  if (isCancel(chosen) || chosen.length === 0) return;
-  for (const asset of chosen) addAssetToProject({ projectDir, asset });
-  log.info(`Added ${chosen.length} asset(s).`);
-  renderStatus();
+
+  while (true) {
+    const source = await select({
+      message: "Add assets from which source?",
+      options: [
+        ...[...bySource.entries()].map(([label, list]) => ({
+          value: label,
+          label,
+          hint: `${list.length} asset(s)`,
+        })),
+        { value: "", label: "Back" },
+      ],
+    });
+    if (isCancel(source) || source === "") return;
+    const available = bySource.get(source);
+    if (available === undefined) continue;
+
+    const chosen = await multiselect<CollectionAsset>({
+      message: `Assets to add from ${source} (space to toggle, enter to confirm)`,
+      options: available.map((asset) => ({
+        value: asset,
+        label: `${asset.name}  (${asset.kind})`,
+      })),
+      maxItems: 12,
+      required: false,
+    });
+    if (isCancel(chosen)) return;
+    if (chosen.length === 0) continue;
+    for (const asset of chosen) addAssetToProject({ projectDir, asset });
+    log.info(`Added ${chosen.length} asset(s) from ${source}.`);
+    renderStatus();
+    return;
+  }
 }
 
 async function runRemoveAssets(): Promise<void> {

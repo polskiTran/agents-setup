@@ -14,7 +14,6 @@ function tempDir(prefix: string): string {
   return dir;
 }
 
-/** A local git repo usable as an upstream URL: committed files, real HEAD sha, and commit() to advance it. */
 function fixtureRepo(files: Record<string, string>): {
   url: string;
   sha: string;
@@ -114,7 +113,6 @@ test("pull previews the upstream diff before writing, applies on approval, bumps
   expect(preview.upstreamSha).toBe(newSha);
   expect(preview.diff).toContain("-# tdd v1");
   expect(preview.diff).toContain("+# tdd v2");
-  // nothing written until apply
   expect(readFileSync(path.join(added.vendorDir, "tdd", "SKILL.md"), "utf8")).toBe("# tdd v1");
   expect(readSources(collection)[0]?.sha).toBe(upstream.sha);
 

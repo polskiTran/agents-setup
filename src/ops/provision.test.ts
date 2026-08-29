@@ -38,7 +38,6 @@ test("init creates canonical areas and relative .claude symlinks", () => {
   ]);
   expect(readlinkSync(path.join(project, ".claude", "skills"))).toBe(path.join("..", ".agents", "skills"));
   expect(readlinkSync(path.join(project, ".claude", "agents"))).toBe(path.join("..", ".agents", "agents"));
-  // the links resolve: content written to .agents is readable at the .claude path
   writeFileSync(path.join(project, ".agents", "skills", "probe"), "x");
   expect(readFileSync(path.join(project, ".claude", "skills", "probe"), "utf8")).toBe("x");
 });

@@ -54,6 +54,14 @@ test("a project asset unknown to the collection is project-only", () => {
   expect(entry).toMatchObject({ state: "project-only", kind: "agent", name: "helper" });
 });
 
+test("a project skill needs no SKILL.md — malformed skill dirs still surface", () => {
+  const collection = tempDir("col-");
+  const project = writeTree(tempDir("proj-"), { ".agents/skills/broken/notes.md": "no SKILL.md here" });
+
+  const [entry] = projectStatus({ collectionRoot: collection, projectDir: project });
+  expect(entry).toMatchObject({ state: "project-only", kind: "skill", name: "broken" });
+});
+
 test("a project without .agents/ is all collection-only, not an error", () => {
   const collection = writeTree(tempDir("col-"), {
     "skills/tdd/SKILL.md": "# tdd",

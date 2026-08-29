@@ -49,7 +49,7 @@ export function discoverCollectionAssets(collectionRoot: string): CollectionAsse
 function scanVendorTree(dir: string, owner: Owner, out: CollectionAsset[]): void {
   if (existsSync(path.join(dir, "SKILL.md"))) {
     out.push({ kind: "skill", name: path.basename(dir), owner, path: dir });
-    return; // everything below a SKILL.md is that skill's internals
+    return;
   }
   if (path.basename(dir) === "agents") {
     for (const file of agentFilesIn(dir)) {

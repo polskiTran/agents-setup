@@ -64,7 +64,6 @@ export function projectStatus(args: { collectionRoot: string; projectDir: string
 
 type ProjectAsset = { kind: AssetKind; name: string; path: string };
 
-/** Skills are any subdir of .agents/skills (malformed ones still surface); agents are .md files in .agents/agents. */
 function discoverProjectAssets(projectDir: string): ProjectAsset[] {
   const assets: ProjectAsset[] = [];
   for (const entry of entriesOf(path.join(projectDir, ".agents", "skills"))) {
@@ -88,7 +87,6 @@ function assetContentEqual(kind: AssetKind, a: string, b: string): boolean {
   );
 }
 
-/** Relative paths of every file under dir, sorted, for whole-directory comparison. */
 function listFiles(dir: string, prefix = ""): string[] {
   const files: string[] = [];
   for (const entry of entriesOf(dir)) {

@@ -150,11 +150,6 @@ export function pullSource(args: { collectionRoot: string; name: string }): Pull
   }
 }
 
-/**
- * Turns a fresh checkout into vendorable content: strips .git, resolves the
- * subpath subtree when set, and copies the repo-root LICENSE into a subpath
- * content root that lacks its own, so attribution travels with the copy.
- */
 function materializeContent(checkout: string, url: string, subpath: string | undefined): string {
   let contentRoot = checkout;
   if (subpath !== undefined) {
@@ -223,7 +218,6 @@ function isSource(value: unknown): value is Source {
   );
 }
 
-/** "<owner>/<repo>" from the last two path segments of a URL or local path. */
 function repoNameFrom(url: string): string {
   const segments = url
     .replace(/\.git$/, "")

@@ -19,8 +19,9 @@ const stateSymbols: Record<StatusEntry["state"], { symbol: string; ansi: string 
   "collection-only": { symbol: "○", ansi: "2" },
 };
 
-// Nerd Font glyphs: nf-fa-book and nf-fa-users.
-const kindSymbols: Record<AssetKind, string> = { skill: "", agent: "" };
+const nfFaBook = "\uf02d";
+const nfFaUsers = "\uf0c0";
+const kindSymbols: Record<AssetKind, string> = { skill: nfFaBook, agent: nfFaUsers };
 
 intro("polskills");
 log.info(`Collection  ${collectionRoot}`);
@@ -300,7 +301,6 @@ async function resolveProjectOnly(entry: StatusEntry & { state: "project-only" }
   log.info(`${entry.name}: adopted into my collection.`);
 }
 
-/** Renders through hunk when it works, otherwise prints a colored diff — never a hard dependency. */
 function showDiff(collectionPath: string, projectPath: string): void {
   const plain = diffPaths({ collectionPath, projectPath });
   if (plain === "") {
@@ -311,7 +311,6 @@ function showDiff(collectionPath: string, projectPath: string): void {
     const result = spawnSync("hunk", [], { input: plain, stdio: ["pipe", "inherit", "inherit"] });
     if (result.status === 0) return;
   } catch {
-    // fall through to plain output
   }
   process.stdout.write(diffPaths({ collectionPath, projectPath, color: process.stdout.isTTY === true }));
 }
@@ -336,7 +335,7 @@ function renderStatus(): void {
         group.map((entry) => `  ${stateGlyph(entry.state)} ${kindSymbols[entry.kind]}  ${entry.name}`).join("\n"),
     );
   log.message(lines.join("\n\n"));
-  log.info(summarize(entries));
+  log.info(legend(entries));
 }
 
 function stateGlyph(state: StatusEntry["state"]): string {
@@ -344,8 +343,7 @@ function stateGlyph(state: StatusEntry["state"]): string {
   return process.stdout.isTTY === true ? `\x1b[${ansi}m${symbol}\x1b[0m` : symbol;
 }
 
-/** Doubles as the legend for both glyph columns, in the same order the entries render. */
-function summarize(entries: StatusEntry[]): string {
+function legend(entries: StatusEntry[]): string {
   const stateCounts = new Map<StatusEntry["state"], number>();
   const kindCounts = new Map<AssetKind, number>();
   for (const entry of entries) {

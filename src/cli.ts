@@ -35,9 +35,10 @@ if (!process.stdin.isTTY) {
 
 while (true) {
   const action = await select({
-    message: "What do you want to do?",
+    message: "Actions:",
     options: [
-      { value: "status", label: "Project status", hint: "re-run the sync view" },
+      { value: "status", label: "Project status", hint: "sync view of this project's assets" },
+      { value: "all-assets", label: "Show all assets", hint: "status including collection-only assets" },
       { value: "resolve", label: "Diff & resolve", hint: "handle differing and project-only assets" },
       { value: "add-assets", label: "Add assets", hint: "provision skills/agents into this project" },
       { value: "remove-assets", label: "Remove assets", hint: "delete provisioned assets from this project" },
@@ -50,6 +51,7 @@ while (true) {
   });
   if (isCancel(action) || action === "exit") break;
   if (action === "status") renderStatus();
+  if (action === "all-assets") renderAllAssets();
   if (action === "resolve") await runResolve();
   if (action === "add-assets") await runAddAssets();
   if (action === "remove-assets") await runRemoveAssets();
@@ -316,11 +318,24 @@ function showDiff(collectionPath: string, projectPath: string): void {
 }
 
 function renderStatus(): void {
+  const entries = projectStatus({ collectionRoot, projectDir }).filter((entry) => entry.state !== "collection-only");
+  if (entries.length === 0) {
+    log.info("Nothing provisioned in this project yet — use Add assets to get started.");
+    return;
+  }
+  renderEntries(entries);
+}
+
+function renderAllAssets(): void {
   const entries = projectStatus({ collectionRoot, projectDir });
   if (entries.length === 0) {
     log.info("Nothing to show yet — the collection and this project have no assets.");
     return;
   }
+  renderEntries(entries);
+}
+
+function renderEntries(entries: StatusEntry[]): void {
   const groups = new Map<string, StatusEntry[]>();
   for (const entry of entries) {
     const label = "asset" in entry ? ownerLabel(entry.asset.owner) : "this project";

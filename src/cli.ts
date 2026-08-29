@@ -19,9 +19,18 @@ const stateSymbols: Record<StatusEntry["state"], { symbol: string; ansi: string 
   "collection-only": { symbol: "○", ansi: "2" },
 };
 
+const MY_COLLECTION = "my collection";
+
+const stateNames: Record<StatusEntry["state"], string> = {
+  differs: "out of sync",
+  "project-only": "only in this project",
+  "in-sync": "in sync",
+  "collection-only": "not in this project",
+};
+
 const addableDisplay: Record<Exclude<AssetSyncState, "in-sync">, { prefix: string; hint?: string }> = {
   absent: { prefix: "  " },
-  differs: { prefix: `${stateGlyph("differs")} `, hint: "project copy differs \u2014 adding overwrites it" },
+  differs: { prefix: `${stateGlyph("differs")} `, hint: "adding overwrites the project copy" },
 };
 
 const nfFaBook = "\uf02d";
@@ -34,23 +43,23 @@ log.info(`Project     ${projectDir}`);
 renderStatus();
 
 if (!process.stdin.isTTY) {
-  outro("The menu needs an interactive terminal — run polskills directly in one.");
+  outro("The menu needs an interactive terminal. Run polskills in one.");
   process.exit(0);
 }
 
 while (true) {
   const action = await select({
-    message: "Actions:",
+    message: "Actions",
     options: [
-      { value: "status", label: "Project status", hint: "sync view of this project's assets" },
-      { value: "all-assets", label: "Show all assets", hint: "status including collection-only assets" },
-      { value: "resolve", label: "Diff & resolve", hint: "handle differing and project-only assets" },
-      { value: "add-assets", label: "Add assets", hint: "provision skills/agents into this project" },
-      { value: "remove-assets", label: "Remove assets", hint: "delete provisioned assets from this project" },
-      { value: "init", label: "Init project", hint: ".agents/ areas + .claude symlinks" },
-      { value: "add-upstream", label: "Add upstream", hint: "vendor a skills repo by URL" },
+      { value: "status", label: "Project status", hint: "what this project has and how it compares" },
+      { value: "all-assets", label: "Show everything", hint: "the same view, plus what is not added yet" },
+      { value: "resolve", label: "Review differences", hint: "fix anything out of sync or only in this project" },
+      { value: "add-assets", label: "Add to project", hint: "copy skills and agents from my collection" },
+      { value: "remove-assets", label: "Remove from project", hint: "delete skills and agents from this project" },
+      { value: "init", label: "Set up project", hint: "creates .agents/skills, .agents/agents, and the .claude symlinks" },
+      { value: "add-upstream", label: "Add upstream", hint: "track a skills repo by URL" },
       { value: "pull-upstream", label: "Pull upstream", hint: "review and apply upstream changes" },
-      { value: "list-sources", label: "List sources", hint: "vendored upstreams and licenses" },
+      { value: "list-sources", label: "List upstreams", hint: "tracked upstreams and their licenses" },
       { value: "exit", label: "Exit" },
     ],
   });
@@ -78,7 +87,7 @@ async function runAddUpstream(): Promise<void> {
   const parsed = parseUpstreamUrl(rawUrl);
 
   const subpathInput = await text({
-    message: "Subpath to vendor (leave empty for the whole repo)",
+    message: "Subpath to track, or empty for the whole repo",
     initialValue: parsed.subpath ?? "",
     defaultValue: "",
   });
@@ -93,10 +102,10 @@ async function runAddUpstream(): Promise<void> {
       url: parsed.url,
       ...(subpath === "" ? {} : { subpath }),
     });
-    progress.stop(`Vendored ${added.source.name} @ ${added.source.sha.slice(0, 7)}`);
+    progress.stop(`Added ${added.source.name} at ${added.source.sha.slice(0, 7)}`);
     reportLicense(added.source.name, added.license);
   } catch (error) {
-    progress.stop("Add failed", 1);
+    progress.stop("Adding the upstream failed", 1);
     log.error(error instanceof Error ? error.message : String(error));
   }
 }
@@ -104,11 +113,11 @@ async function runAddUpstream(): Promise<void> {
 async function runPullUpstream(): Promise<void> {
   const sources = readSources(collectionRoot);
   if (sources.length === 0) {
-    log.info("No sources vendored yet.");
+    log.info("No upstreams yet.");
     return;
   }
   const name = await select({
-    message: "Pull which source?",
+    message: "Pull which upstream?",
     options: sources.map((source) => ({ value: source.name, label: `${source.name}  @ ${source.sha.slice(0, 7)}` })),
   });
   if (isCancel(name)) return;
@@ -119,24 +128,24 @@ async function runPullUpstream(): Promise<void> {
   try {
     preview = pullSource({ collectionRoot, name });
   } catch (error) {
-    progress.stop("Pull failed", 1);
+    progress.stop("Pulling the upstream failed", 1);
     log.error(error instanceof Error ? error.message : String(error));
     return;
   }
   if (preview.kind === "up-to-date") {
-    progress.stop(`${name} is already up to date @ ${preview.source.sha.slice(0, 7)}`);
+    progress.stop(`${name} is already up to date at ${preview.source.sha.slice(0, 7)}`);
     return;
   }
   progress.stop(`${name}: ${preview.source.sha.slice(0, 7)} → ${preview.upstreamSha.slice(0, 7)}`);
   if (preview.diff === "") {
-    log.info("No content changes — applying only bumps the pinned sha.");
+    log.info("The files are identical. Applying updates only the pinned commit.");
   } else {
     showDiff(preview.vendorDir, preview.contentRoot);
   }
   const approved = await confirm({ message: `Apply this update to ${name}?` });
   if (isCancel(approved) || !approved) {
     preview.discard();
-    log.info("Declined — nothing changed.");
+    log.info("Nothing changed.");
     return;
   }
   const updated = preview.apply();
@@ -146,7 +155,7 @@ async function runPullUpstream(): Promise<void> {
 function runListSources(): void {
   const entries = listSources(collectionRoot);
   if (entries.length === 0) {
-    log.info("No sources vendored yet.");
+    log.info("No upstreams yet.");
     return;
   }
   for (const { source, license } of entries) {
@@ -162,9 +171,9 @@ function runInit(): void {
   const outcomes = initProject(projectDir);
   for (const { link, outcome } of outcomes) {
     if (outcome === "conflict") {
-      log.warn(`${link} already exists and is not the expected symlink — left untouched`);
+      log.warn(`${link} exists and is not the expected symlink. Left untouched.`);
     } else {
-      log.info(`${link}: ${outcome}`);
+      log.info(`${link}: ${outcome === "created" ? "created" : "already linked"}`);
     }
   }
 }
@@ -172,7 +181,7 @@ function runInit(): void {
 async function runAddAssets(): Promise<void> {
   const assets = discoverCollectionAssets(collectionRoot);
   if (assets.length === 0) {
-    log.info("The collection has no assets yet — add an upstream or write a skill first.");
+    log.info("My collection is empty. Add an upstream, or write a skill in skills/.");
     return;
   }
   const states = collectionAssetStates({ projectDir, assets });
@@ -181,7 +190,7 @@ async function runAddAssets(): Promise<void> {
     return state === undefined || state === "in-sync" ? [] : [{ asset, state }];
   });
   if (addable.length === 0) {
-    log.info("Every collection asset is already provisioned here and identical — nothing to add.");
+    log.info("This project already has every skill and agent in my collection.");
     return;
   }
   const bySource = new Map<string, typeof addable>();
@@ -192,7 +201,7 @@ async function runAddAssets(): Promise<void> {
 
   while (true) {
     const source = await select({
-      message: "Add assets from which source?",
+      message: "Add from where?",
       options: [
         ...[...bySource.entries()].map(([label, list]) => ({
           value: label,
@@ -207,10 +216,10 @@ async function runAddAssets(): Promise<void> {
     if (available === undefined) continue;
 
     if (available.some(({ state }) => state === "differs")) {
-      log.info(`${stateGlyph("differs")} ${addableDisplay.differs.hint}`);
+      log.info(`${stateGlyph("differs")} out of sync with my collection`);
     }
     const chosen = await multiselect<CollectionAsset>({
-      message: `Assets to add from ${source} (space to toggle, enter to confirm)`,
+      message: `Choose what to add from ${source}. Space selects, enter confirms`,
       options: available.map(({ asset, state }) => {
         const { prefix, hint } = addableDisplay[state];
         return {
@@ -225,7 +234,7 @@ async function runAddAssets(): Promise<void> {
     if (isCancel(chosen)) return;
     if (chosen.length === 0) continue;
     for (const asset of chosen) addAssetToProject({ projectDir, asset });
-    log.info(`Added ${chosen.length} asset(s) from ${source}.`);
+    log.info(`Added ${countPhrase(chosen)} from ${source}.`);
     renderStatus();
     return;
   }
@@ -233,35 +242,42 @@ async function runAddAssets(): Promise<void> {
 
 async function runRemoveAssets(): Promise<void> {
   const entries = projectStatus({ collectionRoot, projectDir });
-  const provisioned = entries.filter((entry) => entry.state === "in-sync" || entry.state === "differs");
-  const projectOnly = entries.filter((entry) => entry.state === "project-only").length;
-  if (provisioned.length === 0) {
+  const added = entries.filter((entry) => entry.state === "in-sync" || entry.state === "differs");
+  const projectOnly = entries.filter((entry) => entry.state === "project-only");
+  if (added.length === 0) {
     log.info(
-      projectOnly === 0
-        ? "Nothing is provisioned in this project."
-        : `Nothing from the collection is provisioned here — ${projectOnly} project-only asset(s) hidden; adopt them via Diff & resolve to manage them.`,
+      projectOnly.length === 0
+        ? "This project has nothing to remove."
+        : `Nothing here came from my collection. ${countPhrase(projectOnly)} exist only in this project, so they are not listed. Copy them into my collection first, from Review differences.`,
     );
     return;
   }
-  if (projectOnly > 0) {
-    log.info(`${projectOnly} project-only asset(s) hidden — adopt them via Diff & resolve first.`);
+  if (projectOnly.length > 0) {
+    log.info(
+      `${countPhrase(projectOnly)} exist only in this project and are not listed. Copy them into my collection first, from Review differences.`,
+    );
   }
   const chosen = await multiselect({
-    message: "Assets to remove from this project",
-    options: provisioned.map((entry, index) => ({
+    message: "Choose what to remove from this project. Space selects, enter confirms",
+    options: added.map((entry, index) => ({
       value: index,
       label: `${stateGlyph(entry.state)} ${entry.name}  (${entry.kind})`,
-      hint: entry.state === "differs" ? "project copy differs — local edits go with it" : "identical to the collection",
+      hint:
+        entry.state === "differs"
+          ? "deleting also deletes the local changes"
+          : "matches my collection",
     })),
     maxItems: 12,
     required: false,
   });
   if (isCancel(chosen) || chosen.length === 0) return;
-  for (const index of chosen) {
-    const entry = provisioned[index];
-    if (entry !== undefined) removeAssetFromProject({ projectDir, kind: entry.kind, name: entry.name });
-  }
-  log.info(`Removed ${chosen.length} asset(s).`);
+  const removed = chosen.flatMap((index) => {
+    const entry = added[index];
+    if (entry === undefined) return [];
+    removeAssetFromProject({ projectDir, kind: entry.kind, name: entry.name });
+    return [entry];
+  });
+  log.info(`Removed ${countPhrase(removed)}.`);
   renderStatus();
 }
 
@@ -271,16 +287,16 @@ async function runResolve(): Promise<void> {
       (entry) => entry.state === "differs" || entry.state === "project-only",
     );
     if (actionable.length === 0) {
-      log.info("Nothing to resolve — no differing or project-only assets.");
+      log.info("Nothing to resolve. Everything here matches my collection.");
       return;
     }
     const index = await select({
-      message: "Resolve which asset?",
+      message: "Resolve which one?",
       options: [
         ...actionable.map((entry, i) => ({
           value: i,
-          label: `${entry.name}  (${entry.kind}, ${entry.state}${
-            "asset" in entry ? `, ${ownerLabel(entry.asset.owner)}` : ""
+          label: `${stateGlyph(entry.state)} ${entry.name}  (${entry.kind}, ${
+            "asset" in entry ? ownerLabel(entry.asset.owner) : stateNames["project-only"]
           })`,
         })),
         { value: -1, label: "Back" },
@@ -298,25 +314,33 @@ async function resolveDiffers(entry: StatusEntry & { state: "differs" }): Promis
   showDiff(entry.asset.path, entry.projectPath);
   const mine = entry.asset.owner.kind === "mine";
   const action = await select({
-    message: `${entry.name}: which version wins?`,
+    message: `${entry.name}: which version do you keep?`,
     options: [
-      { value: "overwrite", label: `Use collection version`, hint: "overwrite the project copy" },
+      {
+        value: "overwrite",
+        label: "Use the version from my collection",
+        hint: "overwrites the project copy",
+      },
       mine
-        ? { value: "write-back", label: "Keep project version", hint: "write back into my collection" }
-        : { value: "fork", label: "Keep project version", hint: `fork to mine — ${ownerLabel(entry.asset.owner)}'s copy stays untouched` },
+        ? { value: "write-back", label: "Keep the project version", hint: "copies it back into my collection" }
+        : {
+            value: "fork",
+            label: "Keep the project version",
+            hint: `copies it into my collection. The ${ownerLabel(entry.asset.owner)} copy stays as it is`,
+          },
       { value: "skip", label: "Skip" },
     ],
   });
   if (isCancel(action) || action === "skip") return;
   if (action === "overwrite") {
     addAssetToProject({ projectDir, asset: entry.asset });
-    log.info(`${entry.name}: project copy replaced with the collection version.`);
+    log.info(`${entry.name}: the project copy now matches my collection.`);
   } else if (action === "write-back") {
     writeBackToCollection({ asset: entry.asset, projectPath: entry.projectPath });
-    log.info(`${entry.name}: my collection copy now matches the project.`);
+    log.info(`${entry.name}: my collection now matches the project copy.`);
   } else if (action === "fork") {
     adoptIntoMine({ collectionRoot, kind: entry.kind, name: entry.name, projectPath: entry.projectPath });
-    log.info(`${entry.name}: forked into my collection; the project now tracks your fork.`);
+    log.info(`${entry.name}: copied into my collection. The project now tracks that copy.`);
   }
 }
 
@@ -324,19 +348,19 @@ async function resolveProjectOnly(entry: StatusEntry & { state: "project-only" }
   const action = await select({
     message: `${entry.name} exists only in this project`,
     options: [
-      { value: "adopt", label: "Adopt into my collection", hint: "make it reusable everywhere" },
+      { value: "adopt", label: "Copy into my collection", hint: "other projects can then add it" },
       { value: "skip", label: "Skip" },
     ],
   });
   if (isCancel(action) || action === "skip") return;
   adoptIntoMine({ collectionRoot, kind: entry.kind, name: entry.name, projectPath: entry.projectPath });
-  log.info(`${entry.name}: adopted into my collection.`);
+  log.info(`${entry.name}: copied into my collection.`);
 }
 
 function showDiff(collectionPath: string, projectPath: string): void {
   const plain = diffPaths({ collectionPath, projectPath });
   if (plain === "") {
-    log.info("No content difference.");
+    log.info("The files are identical.");
     return;
   }
   try {
@@ -350,7 +374,7 @@ function showDiff(collectionPath: string, projectPath: string): void {
 function renderStatus(): void {
   const entries = projectStatus({ collectionRoot, projectDir }).filter((entry) => entry.state !== "collection-only");
   if (entries.length === 0) {
-    log.info("Nothing provisioned in this project yet — use Add assets to get started.");
+    log.info("This project has no skills or agents yet. Choose Add to project.");
     return;
   }
   renderEntries(entries);
@@ -359,7 +383,7 @@ function renderStatus(): void {
 function renderAllAssets(): void {
   const entries = projectStatus({ collectionRoot, projectDir });
   if (entries.length === 0) {
-    log.info("Nothing to show yet — the collection and this project have no assets.");
+    log.info("Nothing to show. My collection and this project are both empty.");
     return;
   }
   renderEntries(entries);
@@ -371,7 +395,7 @@ function renderEntries(entries: StatusEntry[]): void {
     const label = "asset" in entry ? ownerLabel(entry.asset.owner) : "this project";
     groups.set(label, [...(groups.get(label) ?? []), entry]);
   }
-  const groupRank = (label: string) => (label === "mine" ? 0 : label === "this project" ? 1 : 2);
+  const groupRank = (label: string) => (label === MY_COLLECTION ? 0 : label === "this project" ? 1 : 2);
   const lines = [...groups]
     .sort(([a], [b]) => groupRank(a) - groupRank(b) || a.localeCompare(b))
     .map(
@@ -384,9 +408,25 @@ function renderEntries(entries: StatusEntry[]): void {
 }
 
 function sourceHint(candidates: { state: AssetSyncState }[]): string {
-  const differs = candidates.filter((candidate) => candidate.state === "differs").length;
-  const addable = `${candidates.length} addable`;
-  return differs === 0 ? addable : `${addable} · ${differs} differ(s)`;
+  const outOfSync = candidates.filter((candidate) => candidate.state === "differs").length;
+  const fresh = candidates.length - outOfSync;
+  return [
+    ...(fresh === 0 ? [] : [`${fresh} new`]),
+    ...(outOfSync === 0 ? [] : [`${outOfSync} out of sync`]),
+  ].join(", ");
+}
+
+function countPhrase(items: { kind: AssetKind }[]): string {
+  const skills = items.filter((item) => item.kind === "skill").length;
+  const agents = items.length - skills;
+  return [
+    ...(skills === 0 ? [] : [counted("skill", skills)]),
+    ...(agents === 0 ? [] : [counted("agent", agents)]),
+  ].join(" and ");
+}
+
+function counted(kind: AssetKind, count: number): string {
+  return `${count} ${count === 1 ? kind : `${kind}s`}`;
 }
 
 function stateGlyph(state: StatusEntry["state"]): string {
@@ -402,19 +442,19 @@ function legend(entries: StatusEntry[]): string {
     kindCounts.set(entry.kind, (kindCounts.get(entry.kind) ?? 0) + 1);
   }
   return [
-    ...[...stateCounts].map(([state, count]) => `${stateGlyph(state)} ${count} ${state}`),
-    ...[...kindCounts].map(([kind, count]) => `${kindSymbols[kind]} ${count} ${kind}`),
+    ...[...stateCounts].map(([state, count]) => `${stateGlyph(state)} ${count} ${stateNames[state]}`),
+    ...[...kindCounts].map(([kind, count]) => `${kindSymbols[kind]} ${counted(kind, count)}`),
   ].join("   ");
 }
 
 function ownerLabel(owner: Owner): string {
-  return owner.kind === "mine" ? "mine" : owner.source;
+  return owner.kind === "mine" ? MY_COLLECTION : owner.source;
 }
 
 function reportLicense(name: string, license: LicenseInfo): void {
   if (license.kind === "found") {
     log.info(`License: ${license.summary} (${license.file})`);
   } else {
-    log.warn(`${name} ships no license file — vendored anyway, attribution is on you`);
+    log.warn(`${name} ships no license file. It is tracked anyway, so attribution is on you.`);
   }
 }

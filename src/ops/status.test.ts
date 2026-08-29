@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 
 import { discoverCollectionAssets } from "./catalog.ts";
-import { projectStatus } from "./status.ts";
+import { collectionAssetStates, projectStatus } from "./status.ts";
 
 const temps: string[] = [];
 
@@ -85,6 +85,29 @@ test("with duplicate names across owners, an exact content match wins the attrib
   const [entry] = projectStatus({ collectionRoot: collection, projectDir: project });
   expect(entry).toMatchObject({ state: "in-sync", asset: { owner: { kind: "vendor", source: "matt/skills" } } });
 });
+
+test("add-menu states judge each owner's copy separately against the project", () => {
+  const collection = writeTree(tempDir("col-"), {
+    "skills/uv/SKILL.md": "# uv, my edited fork",
+    "vendor/matt/skills/uv/SKILL.md": "# uv upstream",
+    "vendor/matt/skills/tdd/SKILL.md": "# tdd",
+  });
+  const project = writeTree(tempDir("proj-"), { ".agents/skills/uv/SKILL.md": "# uv upstream" });
+
+  const assets = discoverCollectionAssets(collection);
+  const states = collectionAssetStates({ projectDir: project, assets });
+  expect(
+    assets.map((asset) => [`${ownerLabel(asset)}:${asset.name}`, states.get(asset)]),
+  ).toEqual([
+    ["mine:uv", "differs"],
+    ["matt/skills:tdd", "absent"],
+    ["matt/skills:uv", "in-sync"],
+  ]);
+});
+
+function ownerLabel(asset: { owner: { kind: "mine" } | { kind: "vendor"; source: string } }): string {
+  return asset.owner.kind === "mine" ? "mine" : asset.owner.source;
+}
 
 test("a broken symlink in vendored content is skipped, not a crash", () => {
   const collection = writeTree(tempDir("col-"), { "vendor/matt/skills/tdd/SKILL.md": "# tdd" });

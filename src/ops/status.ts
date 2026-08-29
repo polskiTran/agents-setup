@@ -62,6 +62,32 @@ export function projectStatus(args: { collectionRoot: string; projectDir: string
   );
 }
 
+/** How one collection asset compares to the project copy of the same name. */
+export type AssetSyncState = "absent" | "in-sync" | "differs";
+
+/**
+ * Per-asset comparison against the project, keyed by the asset object so that
+ * a name offered by several owners is judged owner by owner: only the copy
+ * whose content actually matches reports "in-sync", the rest report "differs".
+ * That is the view the add menu needs; projectStatus collapses to one entry
+ * per name and would hide the losing candidates.
+ */
+export function collectionAssetStates(args: {
+  projectDir: string;
+  assets: CollectionAsset[];
+}): Map<CollectionAsset, AssetSyncState> {
+  const projectPaths = new Map(
+    discoverProjectAssets(args.projectDir).map((asset) => [`${asset.kind}:${asset.name}`, asset.path]),
+  );
+  return new Map(
+    args.assets.map((asset) => {
+      const projectPath = projectPaths.get(`${asset.kind}:${asset.name}`);
+      if (projectPath === undefined) return [asset, "absent"];
+      return [asset, assetContentEqual(asset.kind, asset.path, projectPath) ? "in-sync" : "differs"];
+    }),
+  );
+}
+
 type ProjectAsset = { kind: AssetKind; name: string; path: string };
 
 function discoverProjectAssets(projectDir: string): ProjectAsset[] {

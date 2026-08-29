@@ -3,7 +3,7 @@ import { confirm, intro, isCancel, log, multiselect, outro, select, spinner, tex
 
 import { findCollectionRoot } from "./ops/collection-root.ts";
 import { addSource, listSources, parseUpstreamUrl, pullSource, readSources, type LicenseInfo } from "./ops/sources.ts";
-import { projectStatus, type StatusEntry } from "./ops/status.ts";
+import { collectionAssetStates, projectStatus, type AssetSyncState, type StatusEntry } from "./ops/status.ts";
 import { addAssetToProject, initProject, removeAssetFromProject } from "./ops/provision.ts";
 import { adoptIntoMine, diffPaths, writeBackToCollection } from "./ops/sync.ts";
 import { discoverCollectionAssets, type AssetKind, type CollectionAsset, type Owner } from "./ops/catalog.ts";
@@ -17,6 +17,16 @@ const stateSymbols: Record<StatusEntry["state"], { symbol: string; ansi: string 
   "project-only": { symbol: "?", ansi: "36" },
   "in-sync": { symbol: "✓", ansi: "32" },
   "collection-only": { symbol: "○", ansi: "2" },
+};
+
+/**
+ * Add-menu decoration for the two states that survive the in-sync filter. An
+ * absent asset gets no glyph \u2014 the checkbox already says it isn't in the
+ * project \u2014 only the pad that keeps names in one column with the marked ones.
+ */
+const addableDisplay: Record<Exclude<AssetSyncState, "in-sync">, { prefix: string; hint?: string }> = {
+  absent: { prefix: "  " },
+  differs: { prefix: `${stateGlyph("differs")} `, hint: "project copy differs \u2014 adding overwrites it" },
 };
 
 const nfFaBook = "\uf02d";
@@ -170,10 +180,21 @@ async function runAddAssets(): Promise<void> {
     log.info("The collection has no assets yet — add an upstream or write a skill first.");
     return;
   }
-  const bySource = new Map<string, CollectionAsset[]>();
-  for (const asset of assets) {
-    const label = ownerLabel(asset.owner);
-    bySource.set(label, [...(bySource.get(label) ?? []), asset]);
+  // Assets already provisioned and identical are dropped: adding one would be a
+  // no-op copy, and hiding them keeps the list to what a choice would change.
+  const states = collectionAssetStates({ projectDir, assets });
+  const addable = assets.flatMap((asset) => {
+    const state = states.get(asset);
+    return state === undefined || state === "in-sync" ? [] : [{ asset, state }];
+  });
+  if (addable.length === 0) {
+    log.info("Every collection asset is already provisioned here and identical — nothing to add.");
+    return;
+  }
+  const bySource = new Map<string, typeof addable>();
+  for (const candidate of addable) {
+    const label = ownerLabel(candidate.asset.owner);
+    bySource.set(label, [...(bySource.get(label) ?? []), candidate]);
   }
 
   while (true) {
@@ -183,7 +204,7 @@ async function runAddAssets(): Promise<void> {
         ...[...bySource.entries()].map(([label, list]) => ({
           value: label,
           label,
-          hint: `${list.length} asset(s)`,
+          hint: sourceHint(list),
         })),
         { value: "", label: "Back" },
       ],
@@ -192,12 +213,19 @@ async function runAddAssets(): Promise<void> {
     const available = bySource.get(source);
     if (available === undefined) continue;
 
+    if (available.some(({ state }) => state === "differs")) {
+      log.info(`${stateGlyph("differs")} ${addableDisplay.differs.hint}`);
+    }
     const chosen = await multiselect<CollectionAsset>({
       message: `Assets to add from ${source} (space to toggle, enter to confirm)`,
-      options: available.map((asset) => ({
-        value: asset,
-        label: `${asset.name}  (${asset.kind})`,
-      })),
+      options: available.map(({ asset, state }) => {
+        const { prefix, hint } = addableDisplay[state];
+        return {
+          value: asset,
+          label: `${prefix}${asset.name}  (${asset.kind})`,
+          ...(hint === undefined ? {} : { hint }),
+        };
+      }),
       maxItems: 12,
       required: false,
     });
@@ -211,19 +239,31 @@ async function runAddAssets(): Promise<void> {
 }
 
 async function runRemoveAssets(): Promise<void> {
-  const provisioned = projectStatus({ collectionRoot, projectDir }).filter(
-    (entry) => entry.state !== "collection-only",
-  );
+  // Only assets the collection also has are offered: a project-only asset
+  // exists nowhere else, so deleting it here would lose it outright. Resolve
+  // adopts those into the collection first.
+  const entries = projectStatus({ collectionRoot, projectDir });
+  const provisioned = entries.filter((entry) => entry.state === "in-sync" || entry.state === "differs");
+  const projectOnly = entries.filter((entry) => entry.state === "project-only").length;
   if (provisioned.length === 0) {
-    log.info("Nothing is provisioned in this project.");
+    log.info(
+      projectOnly === 0
+        ? "Nothing is provisioned in this project."
+        : `Nothing from the collection is provisioned here — ${projectOnly} project-only asset(s) hidden; adopt them via Diff & resolve to manage them.`,
+    );
     return;
+  }
+  if (projectOnly > 0) {
+    log.info(`${projectOnly} project-only asset(s) hidden — adopt them via Diff & resolve first.`);
   }
   const chosen = await multiselect({
     message: "Assets to remove from this project",
     options: provisioned.map((entry, index) => ({
       value: index,
-      label: `${entry.name}  (${entry.kind}, ${entry.state})`,
+      label: `${stateGlyph(entry.state)} ${entry.name}  (${entry.kind})`,
+      hint: entry.state === "differs" ? "project copy differs — local edits go with it" : "identical to the collection",
     })),
+    maxItems: 12,
     required: false,
   });
   if (isCancel(chosen) || chosen.length === 0) return;
@@ -351,6 +391,13 @@ function renderEntries(entries: StatusEntry[]): void {
     );
   log.message(lines.join("\n\n"));
   log.info(legend(entries));
+}
+
+/** "12 addable · 3 differ(s)" — the drift count is dropped when zero. */
+function sourceHint(candidates: { state: AssetSyncState }[]): string {
+  const differs = candidates.filter((candidate) => candidate.state === "differs").length;
+  const addable = `${candidates.length} addable`;
+  return differs === 0 ? addable : `${addable} · ${differs} differ(s)`;
 }
 
 function stateGlyph(state: StatusEntry["state"]): string {

@@ -1,0 +1,13 @@
+interface:
+  display_name: Security Harden
+  short_description: Proactively review and harden app code, APIs, auth, secrets,
+    and CI/CD
+  default_prompt: Use $security-harden to review this application, prioritize evidenced
+    risks, and implement safe verified fixes.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

@@ -14,6 +14,22 @@ pnpm add -g link:.   # pnpm 11 replacement for the removed `pnpm link --global`
 
 Then run `polskills` from any project directory.
 
+## Update
+
+```bash
+cd agents-setup
+git pull
+pnpm i   # prepare hook rebuilds dist; the global bin links into this clone, so it's current immediately
+```
+
+## Uninstall
+
+```bash
+pnpm remove -g polskills
+```
+
+Then delete the clone 
+
 ## Skills upstreams
 - https://github.com/mattpocock/skills
 - https://github.com/cursor/plugins/tree/main/pstack

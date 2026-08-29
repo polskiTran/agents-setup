@@ -6,11 +6,21 @@ import { addSource, listSources, parseUpstreamUrl, pullSource, readSources, type
 import { projectStatus, type StatusEntry } from "./ops/status.ts";
 import { addAssetToProject, initProject, removeAssetFromProject } from "./ops/provision.ts";
 import { adoptIntoMine, diffPaths, writeBackToCollection } from "./ops/sync.ts";
-import { discoverCollectionAssets, type CollectionAsset, type Owner } from "./ops/catalog.ts";
+import { discoverCollectionAssets, type AssetKind, type CollectionAsset, type Owner } from "./ops/catalog.ts";
 import { spawnSync } from "node:child_process";
 
 const collectionRoot = findCollectionRoot(import.meta.dirname);
 const projectDir = process.cwd();
+
+const stateSymbols: Record<StatusEntry["state"], { symbol: string; ansi: string }> = {
+  differs: { symbol: "≠", ansi: "33" },
+  "project-only": { symbol: "?", ansi: "36" },
+  "in-sync": { symbol: "✓", ansi: "32" },
+  "collection-only": { symbol: "○", ansi: "2" },
+};
+
+// Nerd Font glyphs: nf-fa-book and nf-fa-users.
+const kindSymbols: Record<AssetKind, string> = { skill: "", agent: "" };
 
 intro("polskills");
 log.info(`Collection  ${collectionRoot}`);
@@ -312,18 +322,40 @@ function renderStatus(): void {
     log.info("Nothing to show yet — the collection and this project have no assets.");
     return;
   }
-  const lines = entries.map((entry) => {
-    const owner = "asset" in entry ? `  (${ownerLabel(entry.asset.owner)})` : "";
-    return `${entry.state.padEnd(15)}  ${entry.kind.padEnd(5)}  ${entry.name}${owner}`;
-  });
-  log.message(lines.join("\n"));
+  const groups = new Map<string, StatusEntry[]>();
+  for (const entry of entries) {
+    const label = "asset" in entry ? ownerLabel(entry.asset.owner) : "this project";
+    groups.set(label, [...(groups.get(label) ?? []), entry]);
+  }
+  const groupRank = (label: string) => (label === "mine" ? 0 : label === "this project" ? 1 : 2);
+  const lines = [...groups]
+    .sort(([a], [b]) => groupRank(a) - groupRank(b) || a.localeCompare(b))
+    .map(
+      ([label, group]) =>
+        `${label}\n` +
+        group.map((entry) => `  ${stateGlyph(entry.state)} ${kindSymbols[entry.kind]}  ${entry.name}`).join("\n"),
+    );
+  log.message(lines.join("\n\n"));
   log.info(summarize(entries));
 }
 
+function stateGlyph(state: StatusEntry["state"]): string {
+  const { symbol, ansi } = stateSymbols[state];
+  return process.stdout.isTTY === true ? `\x1b[${ansi}m${symbol}\x1b[0m` : symbol;
+}
+
+/** Doubles as the legend for both glyph columns, in the same order the entries render. */
 function summarize(entries: StatusEntry[]): string {
-  const counts = new Map<StatusEntry["state"], number>();
-  for (const entry of entries) counts.set(entry.state, (counts.get(entry.state) ?? 0) + 1);
-  return [...counts].map(([state, count]) => `${count} ${state}`).join(", ");
+  const stateCounts = new Map<StatusEntry["state"], number>();
+  const kindCounts = new Map<AssetKind, number>();
+  for (const entry of entries) {
+    stateCounts.set(entry.state, (stateCounts.get(entry.state) ?? 0) + 1);
+    kindCounts.set(entry.kind, (kindCounts.get(entry.kind) ?? 0) + 1);
+  }
+  return [
+    ...[...stateCounts].map(([state, count]) => `${stateGlyph(state)} ${count} ${state}`),
+    ...[...kindCounts].map(([kind, count]) => `${kindSymbols[kind]} ${count} ${kind}`),
+  ].join("   ");
 }
 
 function ownerLabel(owner: Owner): string {

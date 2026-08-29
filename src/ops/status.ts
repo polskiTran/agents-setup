@@ -10,38 +10,32 @@ export type StatusEntry =
   | { state: "collection-only"; kind: AssetKind; name: string; asset: CollectionAsset }
   | { state: "project-only"; kind: AssetKind; name: string; projectPath: string };
 
-/**
- * The four-state sync view: every asset name known to the collection or
- * present in the project's .agents/ areas, compared purely by content — no
- * manifest anywhere. When several owners provide the same name, an exact
- * content match wins the attribution; otherwise the first candidate
- * (mine before vendors) is the comparator. A project without .agents/ is
- * simply all collection-only.
- */
 export function projectStatus(args: { collectionRoot: string; projectDir: string }): StatusEntry[] {
+  const assets = byOwnerPrecedence(discoverCollectionAssets(args.collectionRoot));
+  const projectAssets = discoverProjectAssets(args.projectDir);
+  const states = compareToProject(assets, projectAssets);
+
   const candidatesByKey = new Map<string, CollectionAsset[]>();
-  for (const asset of discoverCollectionAssets(args.collectionRoot)) {
-    const key = `${asset.kind}:${asset.name}`;
-    candidatesByKey.set(key, [...(candidatesByKey.get(key) ?? []), asset]);
+  for (const asset of assets) {
+    candidatesByKey.set(keyOf(asset), [...(candidatesByKey.get(keyOf(asset)) ?? []), asset]);
   }
 
-  const projectAssets = discoverProjectAssets(args.projectDir);
   const entries: StatusEntry[] = [];
 
-  for (const project of projectAssets) {
-    const candidates = candidatesByKey.get(`${project.kind}:${project.name}`);
+  for (const { kind, name, path: projectPath } of projectAssets) {
+    const candidates = candidatesByKey.get(keyOf({ kind, name }));
     if (candidates === undefined) {
-      entries.push({ state: "project-only", kind: project.kind, name: project.name, projectPath: project.path });
+      entries.push({ state: "project-only", kind, name, projectPath });
       continue;
     }
-    candidatesByKey.delete(`${project.kind}:${project.name}`);
-    const match = candidates.find((candidate) => assetContentEqual(candidate.kind, candidate.path, project.path));
-    const first = candidates[0];
-    if (match !== undefined) {
-      entries.push({ state: "in-sync", kind: project.kind, name: project.name, asset: match, projectPath: project.path });
-    } else if (first !== undefined) {
-      entries.push({ state: "differs", kind: project.kind, name: project.name, asset: first, projectPath: project.path });
+    candidatesByKey.delete(keyOf({ kind, name }));
+    const matched = candidates.find((candidate) => states.get(candidate) === "in-sync");
+    if (matched !== undefined) {
+      entries.push({ state: "in-sync", kind, name, asset: matched, projectPath });
+      continue;
     }
+    const first = candidates[0];
+    if (first !== undefined) entries.push({ state: "differs", kind, name, asset: first, projectPath });
   }
 
   for (const candidates of candidatesByKey.values()) {
@@ -62,30 +56,36 @@ export function projectStatus(args: { collectionRoot: string; projectDir: string
   );
 }
 
-/** How one collection asset compares to the project copy of the same name. */
 export type AssetSyncState = "absent" | "in-sync" | "differs";
 
-/**
- * Per-asset comparison against the project, keyed by the asset object so that
- * a name offered by several owners is judged owner by owner: only the copy
- * whose content actually matches reports "in-sync", the rest report "differs".
- * That is the view the add menu needs; projectStatus collapses to one entry
- * per name and would hide the losing candidates.
- */
 export function collectionAssetStates(args: {
   projectDir: string;
   assets: CollectionAsset[];
 }): Map<CollectionAsset, AssetSyncState> {
-  const projectPaths = new Map(
-    discoverProjectAssets(args.projectDir).map((asset) => [`${asset.kind}:${asset.name}`, asset.path]),
-  );
+  return compareToProject(args.assets, discoverProjectAssets(args.projectDir));
+}
+
+function compareToProject(
+  assets: CollectionAsset[],
+  projectAssets: ProjectAsset[],
+): Map<CollectionAsset, AssetSyncState> {
+  const projectPaths = new Map(projectAssets.map((asset) => [keyOf(asset), asset.path]));
   return new Map(
-    args.assets.map((asset) => {
-      const projectPath = projectPaths.get(`${asset.kind}:${asset.name}`);
+    assets.map((asset) => {
+      const projectPath = projectPaths.get(keyOf(asset));
       if (projectPath === undefined) return [asset, "absent"];
       return [asset, assetContentEqual(asset.kind, asset.path, projectPath) ? "in-sync" : "differs"];
     }),
   );
+}
+
+function byOwnerPrecedence(assets: CollectionAsset[]): CollectionAsset[] {
+  const rank = (asset: CollectionAsset): number => (asset.owner.kind === "mine" ? 0 : 1);
+  return [...assets].sort((a, b) => rank(a) - rank(b));
+}
+
+function keyOf(asset: { kind: AssetKind; name: string }): string {
+  return `${asset.kind}:${asset.name}`;
 }
 
 type ProjectAsset = { kind: AssetKind; name: string; path: string };

@@ -19,11 +19,6 @@ const stateSymbols: Record<StatusEntry["state"], { symbol: string; ansi: string 
   "collection-only": { symbol: "○", ansi: "2" },
 };
 
-/**
- * Add-menu decoration for the two states that survive the in-sync filter. An
- * absent asset gets no glyph \u2014 the checkbox already says it isn't in the
- * project \u2014 only the pad that keeps names in one column with the marked ones.
- */
 const addableDisplay: Record<Exclude<AssetSyncState, "in-sync">, { prefix: string; hint?: string }> = {
   absent: { prefix: "  " },
   differs: { prefix: `${stateGlyph("differs")} `, hint: "project copy differs \u2014 adding overwrites it" },
@@ -180,8 +175,6 @@ async function runAddAssets(): Promise<void> {
     log.info("The collection has no assets yet — add an upstream or write a skill first.");
     return;
   }
-  // Assets already provisioned and identical are dropped: adding one would be a
-  // no-op copy, and hiding them keeps the list to what a choice would change.
   const states = collectionAssetStates({ projectDir, assets });
   const addable = assets.flatMap((asset) => {
     const state = states.get(asset);
@@ -239,9 +232,6 @@ async function runAddAssets(): Promise<void> {
 }
 
 async function runRemoveAssets(): Promise<void> {
-  // Only assets the collection also has are offered: a project-only asset
-  // exists nowhere else, so deleting it here would lose it outright. Resolve
-  // adopts those into the collection first.
   const entries = projectStatus({ collectionRoot, projectDir });
   const provisioned = entries.filter((entry) => entry.state === "in-sync" || entry.state === "differs");
   const projectOnly = entries.filter((entry) => entry.state === "project-only").length;
@@ -393,7 +383,6 @@ function renderEntries(entries: StatusEntry[]): void {
   log.info(legend(entries));
 }
 
-/** "12 addable · 3 differ(s)" — the drift count is dropped when zero. */
 function sourceHint(candidates: { state: AssetSyncState }[]): string {
   const differs = candidates.filter((candidate) => candidate.state === "differs").length;
   const addable = `${candidates.length} addable`;

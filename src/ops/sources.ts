@@ -15,7 +15,6 @@ import path from "node:path";
 
 import { diffPaths } from "./sync.ts";
 
-/** One vendored upstream, as recorded in sources.json at the collection root. */
 export type Source = {
   name: string;
   url: string;
@@ -31,11 +30,6 @@ export type AddedSource = { source: Source; vendorDir: string; license: LicenseI
 
 const SOURCES_FILE = "sources.json";
 
-/**
- * Splits a pasted upstream reference into a cloneable URL and an optional
- * subpath. GitHub tree links (https://github.com/o/r/tree/<ref>/<dir>) become
- * the repo URL plus that dir; anything else passes through untouched.
- */
 export function parseUpstreamUrl(input: string): { url: string; subpath?: string } {
   const trimmed = input.trim().replace(/\/+$/, "");
   const tree = trimmed.match(/^(?<base>https?:\/\/[^/]+\/[^/]+\/[^/]+)\/tree\/[^/]+\/(?<subpath>.+)$/);
@@ -45,13 +39,6 @@ export function parseUpstreamUrl(input: string): { url: string; subpath?: string
   return { url: trimmed };
 }
 
-/**
- * Vendors an upstream into the collection: shallow-clones it, strips .git,
- * keeps only `subpath` when given, copies the result into vendor/<name>/, and
- * records the pinned sha in sources.json. When a subpath is vendored, the
- * upstream's repo-root LICENSE is copied into the vendored dir so attribution
- * travels with the copy. Throws if the source is already vendored.
- */
 export function addSource(args: { collectionRoot: string; url: string; subpath?: string }): AddedSource {
   const { collectionRoot, url, subpath } = args;
   const name = repoNameFrom(url);
@@ -65,6 +52,7 @@ export function addSource(args: { collectionRoot: string; url: string; subpath?:
     git(["clone", "--depth", "1", url, checkout]);
     const sha = git(["-C", checkout, "rev-parse", "HEAD"]).trim();
     const contentRoot = materializeContent(checkout, url, subpath);
+    carryRepoLicenseInto(checkout, contentRoot);
 
     const vendorDir = path.join(collectionRoot, "vendor", name);
     rmSync(vendorDir, { recursive: true, force: true });
@@ -92,14 +80,6 @@ export type PullPreview =
       discard: () => void;
     };
 
-/**
- * Prepares an upstream pull without writing anything: fresh shallow clone,
- * upstream HEAD resolved, and the diff between the vendored copy and upstream
- * computed (subpath respected). The caller reviews the diff and then either
- * apply() — overwrite the vendored copy, bump the sha in sources.json, clean
- * up — or discard(), which changes nothing, including the sha. An unreachable
- * upstream throws with the vendored copy and sources.json intact.
- */
 export function pullSource(args: { collectionRoot: string; name: string }): PullPreview {
   const { collectionRoot, name } = args;
   const source = readSources(collectionRoot).find((entry) => entry.name === name);
@@ -122,6 +102,7 @@ export function pullSource(args: { collectionRoot: string; name: string }): Pull
       return { kind: "up-to-date", source };
     }
     const contentRoot = materializeContent(checkout, source.url, source.subpath);
+    carryRepoLicenseInto(checkout, contentRoot);
     const diff = diffPaths({ collectionPath: vendorDir, projectPath: contentRoot });
     return {
       kind: "changed",
@@ -160,13 +141,15 @@ function materializeContent(checkout: string, url: string, subpath: string | und
     }
   }
   rmSync(path.join(checkout, ".git"), { recursive: true, force: true });
-  if (subpath !== undefined && findLicense(contentRoot).kind === "missing") {
-    const repoRoot = findLicense(checkout);
-    if (repoRoot.kind === "found") {
-      cpSync(path.join(checkout, repoRoot.file), path.join(contentRoot, repoRoot.file));
-    }
-  }
   return contentRoot;
+}
+
+function carryRepoLicenseInto(checkout: string, contentRoot: string): void {
+  if (contentRoot === checkout || findLicense(contentRoot).kind !== "missing") return;
+  const license = findLicense(checkout);
+  if (license.kind === "found") {
+    cpSync(path.join(checkout, license.file), path.join(contentRoot, license.file));
+  }
 }
 
 function errorDetail(error: unknown): string {
@@ -182,7 +165,6 @@ function errorDetail(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Every recorded source joined with the license found in its vendored copy. */
 export function listSources(collectionRoot: string): { source: Source; license: LicenseInfo }[] {
   return readSources(collectionRoot).map((source) => ({
     source,

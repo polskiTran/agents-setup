@@ -3,12 +3,7 @@ import path from "node:path";
 
 export type DirEntry = { name: string; path: string; type: "dir" | "file" };
 
-/**
- * Sorted entries of a directory, safe for arbitrary vendored content:
- * symlinks are classified by what they resolve to, and broken symlinks are
- * skipped instead of crashing the walk (real upstreams ship them).
- * A missing directory is just empty.
- */
+/** Vendored upstreams ship broken symlinks; statSync throws on those, so the walk skips them. */
 export function entriesOf(dir: string): DirEntry[] {
   if (!existsSync(dir)) return [];
   const entries: DirEntry[] = [];

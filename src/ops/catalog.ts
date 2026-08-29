@@ -7,7 +7,6 @@ export type AssetKind = "skill" | "agent";
 
 export type Owner = { kind: "mine" } | { kind: "vendor"; source: string };
 
-/** One provisionable asset: a skill directory or a subagent .md file. */
 export type CollectionAsset = {
   kind: AssetKind;
   name: string;
@@ -15,13 +14,6 @@ export type CollectionAsset = {
   path: string;
 };
 
-/**
- * Everything provisionable from the collection, mine first, then vendors in
- * sorted order — status resolution relies on that precedence. Skills are
- * directories containing SKILL.md (searched recursively under vendor copies,
- * so any upstream layout works, including whole-repo-is-one-skill). Subagents
- * are .md files directly inside a directory named "agents".
- */
 export function discoverCollectionAssets(collectionRoot: string): CollectionAsset[] {
   const assets: CollectionAsset[] = [];
   const mine: Owner = { kind: "mine" };

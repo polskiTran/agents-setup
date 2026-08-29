@@ -1,12 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-/**
- * Walks up from `startDir` to the directory whose package.json names the
- * polskills package — the collection root. The CLI passes its own module
- * directory, so a globally linked bin locates the collection through its
- * install location alone: no env var, config file, or prompt.
- */
 export function findCollectionRoot(startDir: string): string {
   let dir = path.resolve(startDir);
   while (true) {

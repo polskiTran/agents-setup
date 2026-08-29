@@ -5,12 +5,7 @@ import type { AssetKind, CollectionAsset } from "./catalog.ts";
 
 export type InitOutcome = { link: string; outcome: "created" | "already-linked" | "conflict" };
 
-/**
- * Creates the canonical committed areas (.agents/skills, .agents/agents) and
- * the relative .claude symlinks Claude Code reads through. Safe to re-run:
- * correct links are left alone, and anything unexpected already sitting at a
- * link path is reported as a conflict, never clobbered.
- */
+/** The symlinks exist because Claude Code only loads skills and subagents from .claude/. */
 export function initProject(projectDir: string): InitOutcome[] {
   mkdirSync(path.join(projectDir, ".agents", "skills"), { recursive: true });
   mkdirSync(path.join(projectDir, ".agents", "agents"), { recursive: true });
@@ -40,12 +35,6 @@ function isSymlink(p: string): boolean {
   }
 }
 
-/**
- * Copies an asset from the collection into the project's .agents/ areas,
- * replacing any existing copy of the same name — this is also the
- * collection→project overwrite used to resolve drift. Returns the
- * destination path.
- */
 export function addAssetToProject(args: { projectDir: string; asset: CollectionAsset }): string {
   const { projectDir, asset } = args;
   const dest =
@@ -58,7 +47,6 @@ export function addAssetToProject(args: { projectDir: string; asset: CollectionA
   return dest;
 }
 
-/** Deletes a provisioned asset from the project. Throws if it isn't there. */
 export function removeAssetFromProject(args: { projectDir: string; kind: AssetKind; name: string }): void {
   const { projectDir, kind, name } = args;
   const target =

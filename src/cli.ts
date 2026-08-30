@@ -2,7 +2,15 @@
 import { confirm, intro, isCancel, log, multiselect, outro, select, spinner, text } from "@clack/prompts";
 
 import { findCollectionRoot } from "./ops/collection-root.ts";
-import { addSource, listSources, parseUpstreamUrl, pullSource, readSources, type LicenseInfo } from "./ops/sources.ts";
+import {
+  addSource,
+  listSources,
+  parseUpstreamUrl,
+  pullSource,
+  readSources,
+  removeSource,
+  type LicenseInfo,
+} from "./ops/sources.ts";
 import { collectionAssetStates, projectStatus, type AssetSyncState, type StatusEntry } from "./ops/status.ts";
 import { addAssetToProject, initProject, removeAssetFromProject } from "./ops/provision.ts";
 import { adoptIntoMine, diffPaths, writeBackToCollection } from "./ops/sync.ts";
@@ -59,6 +67,7 @@ while (true) {
       { value: "init", label: "Set up project", hint: "creates .agents/skills, .agents/agents, and the .claude symlinks" },
       { value: "add-upstream", label: "Add upstream", hint: "track a skills repo by URL" },
       { value: "pull-upstream", label: "Pull upstream", hint: "review and apply upstream changes" },
+      { value: "remove-upstream", label: "Remove upstream", hint: "stop tracking a repo and delete its vendored copy" },
       { value: "list-sources", label: "List upstreams", hint: "tracked upstreams and their licenses" },
       { value: "exit", label: "Exit" },
     ],
@@ -72,6 +81,7 @@ while (true) {
   if (action === "init") runInit();
   if (action === "add-upstream") await runAddUpstream();
   if (action === "pull-upstream") await runPullUpstream();
+  if (action === "remove-upstream") await runRemoveUpstream();
   if (action === "list-sources") runListSources();
 }
 
@@ -150,6 +160,43 @@ async function runPullUpstream(): Promise<void> {
   }
   const updated = preview.apply();
   log.info(`${name} updated to ${updated.sha.slice(0, 7)}.`);
+}
+
+async function runRemoveUpstream(): Promise<void> {
+  const sources = readSources(collectionRoot);
+  if (sources.length === 0) {
+    log.info("No upstreams yet.");
+    return;
+  }
+  const name = await select({
+    message: "Remove which upstream?",
+    options: [
+      ...sources.map((source) => ({ value: source.name, label: source.name, hint: source.url })),
+      { value: "", label: "Back" },
+    ],
+  });
+  if (isCancel(name) || name === "") return;
+
+  const vendored = discoverCollectionAssets(collectionRoot).filter(
+    (asset) => asset.owner.kind === "vendor" && asset.owner.source === name,
+  );
+  const approved = await confirm({
+    message:
+      vendored.length === 0
+        ? `Stop tracking ${name} and delete vendor/${name}?`
+        : `Stop tracking ${name}? That deletes vendor/${name} and its ${countPhrase(vendored)}. Copies already in projects stay.`,
+  });
+  if (isCancel(approved) || !approved) {
+    log.info("Nothing changed.");
+    return;
+  }
+  try {
+    removeSource({ collectionRoot, name });
+    log.info(`${name} is no longer tracked.`);
+    renderStatus();
+  } catch (error) {
+    log.error(error instanceof Error ? error.message : String(error));
+  }
 }
 
 function runListSources(): void {

@@ -23,6 +23,11 @@ function writeTree(root: string, files: Record<string, string>): string {
   return root;
 }
 
+/** A vendored tree is only part of the collection when sources.json records it. */
+function sourcesJson(...names: string[]): string {
+  return JSON.stringify(names.map((name) => ({ url: `https://github.com/${name}`, sha: "0".repeat(40) })));
+}
+
 afterEach(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -53,7 +58,10 @@ test("write-back updates my collection copy and the asset returns to in-sync", (
 });
 
 test("write-back to a vendor-sourced asset throws and changes nothing", () => {
-  const collection = writeTree(tempDir("col-"), { "vendor/matt/skills/tdd/SKILL.md": "# tdd upstream" });
+  const collection = writeTree(tempDir("col-"), {
+    "sources.json": sourcesJson("matt/skills"),
+    "vendor/matt/skills/tdd/SKILL.md": "# tdd upstream",
+  });
   const project = writeTree(tempDir("proj-"), { ".agents/skills/tdd/SKILL.md": "# tdd edited" });
   const [asset] = discoverCollectionAssets(collection);
   if (asset === undefined) throw new Error("fixture broke");
@@ -65,7 +73,10 @@ test("write-back to a vendor-sourced asset throws and changes nothing", () => {
 });
 
 test("fork-to-mine keeps the project version as mine and leaves the vendored copy untouched", () => {
-  const collection = writeTree(tempDir("col-"), { "vendor/matt/skills/tdd/SKILL.md": "# tdd upstream" });
+  const collection = writeTree(tempDir("col-"), {
+    "sources.json": sourcesJson("matt/skills"),
+    "vendor/matt/skills/tdd/SKILL.md": "# tdd upstream",
+  });
   const project = writeTree(tempDir("proj-"), { ".agents/skills/tdd/SKILL.md": "# tdd, my edits" });
 
   adoptIntoMine({

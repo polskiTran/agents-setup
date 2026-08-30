@@ -22,6 +22,11 @@ function writeTree(root: string, files: Record<string, string>): string {
   return root;
 }
 
+/** A vendored tree is only part of the collection when sources.json records it. */
+function sourcesJson(...names: string[]): string {
+  return JSON.stringify(names.map((name) => ({ url: `https://github.com/${name}`, sha: "0".repeat(40) })));
+}
+
 afterEach(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -64,6 +69,7 @@ test("a project skill needs no SKILL.md — malformed skill dirs still surface",
 
 test("a project without .agents/ is all collection-only, not an error", () => {
   const collection = writeTree(tempDir("col-"), {
+    "sources.json": sourcesJson("matt/skills"),
     "skills/tdd/SKILL.md": "# tdd",
     "vendor/matt/skills/uv/SKILL.md": "# uv",
     "agents/reviewer.md": "# reviewer",
@@ -77,6 +83,7 @@ test("a project without .agents/ is all collection-only, not an error", () => {
 
 test("with duplicate names across owners, an exact content match wins the attribution", () => {
   const collection = writeTree(tempDir("col-"), {
+    "sources.json": sourcesJson("matt/skills"),
     "skills/uv/SKILL.md": "# uv, my edited fork",
     "vendor/matt/skills/uv/SKILL.md": "# uv upstream",
   });
@@ -88,6 +95,7 @@ test("with duplicate names across owners, an exact content match wins the attrib
 
 test("add-menu states judge each owner's copy separately against the project", () => {
   const collection = writeTree(tempDir("col-"), {
+    "sources.json": sourcesJson("matt/skills"),
     "skills/uv/SKILL.md": "# uv, my edited fork",
     "vendor/matt/skills/uv/SKILL.md": "# uv upstream",
     "vendor/matt/skills/tdd/SKILL.md": "# tdd",
@@ -109,8 +117,28 @@ function ownerLabel(asset: { owner: { kind: "mine" } | { kind: "vendor"; source:
   return asset.owner.kind === "mine" ? "mine" : asset.owner.source;
 }
 
+test("two subtrees of one repo are separate owners, each rooted at its own vendor dir", () => {
+  const collection = writeTree(tempDir("col-"), {
+    "sources.json": JSON.stringify([
+      { url: "https://github.com/cursor/plugins", subpath: "pstack", sha: "0".repeat(40) },
+      { url: "https://github.com/cursor/plugins", subpath: "team-kit/skills", sha: "0".repeat(40) },
+    ]),
+    "vendor/cursor/plugins/pstack/uv/SKILL.md": "# uv",
+    "vendor/cursor/plugins/team-kit/skills/tdd/SKILL.md": "# tdd",
+  });
+
+  const assets = discoverCollectionAssets(collection);
+  expect(assets.map((asset) => `${ownerLabel(asset)}:${asset.name}`)).toEqual([
+    "cursor/plugins/pstack:uv",
+    "cursor/plugins/team-kit/skills:tdd",
+  ]);
+});
+
 test("a broken symlink in vendored content is skipped, not a crash", () => {
-  const collection = writeTree(tempDir("col-"), { "vendor/matt/skills/tdd/SKILL.md": "# tdd" });
+  const collection = writeTree(tempDir("col-"), {
+    "sources.json": sourcesJson("matt/skills"),
+    "vendor/matt/skills/tdd/SKILL.md": "# tdd",
+  });
   symlinkSync("CLAUDE.md", path.join(collection, "vendor/matt/skills/AGENTS.md"));
 
   const entries = projectStatus({ collectionRoot: collection, projectDir: tempDir("proj-") });
@@ -119,6 +147,7 @@ test("a broken symlink in vendored content is skipped, not a crash", () => {
 
 test("catalog finds nested vendor skills and agents, but not skill internals", () => {
   const collection = writeTree(tempDir("col-"), {
+    "sources.json": sourcesJson("matt/skills"),
     "vendor/matt/skills/deep/nested/tdd/SKILL.md": "# tdd",
     "vendor/matt/skills/deep/nested/tdd/references/guide.md": "internals, not an agent",
     "vendor/matt/skills/agents/reviewer.md": "# reviewer",

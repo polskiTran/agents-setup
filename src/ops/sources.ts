@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -16,11 +17,19 @@ import path from "node:path";
 import { diffPaths } from "./sync.ts";
 
 export type Source = {
+  /**
+   * Identity and vendor/ location of the source: `owner/repo` for a whole repo,
+   * `owner/repo/<subpath>` for a subtree. Derived from url + subpath, never stored,
+   * so the recorded name can never drift from where the files actually live.
+   */
   name: string;
   url: string;
   subpath?: string;
   sha: string;
 };
+
+/** What sources.json holds. The name is derived on read. */
+type StoredSource = Omit<Source, "name">;
 
 export type LicenseInfo =
   | { kind: "found"; file: string; summary: string }
@@ -40,21 +49,20 @@ export function parseUpstreamUrl(input: string): { url: string; subpath?: string
 }
 
 export function addSource(args: { collectionRoot: string; url: string; subpath?: string }): AddedSource {
-  const { collectionRoot, url, subpath } = args;
-  const name = repoNameFrom(url);
+  const { collectionRoot, url } = args;
+  const subpath = normalizeSubpath(args.subpath);
+  const name = sourceName(url, subpath);
   const sources = readSources(collectionRoot);
-  if (sources.some((source) => source.name === name)) {
-    throw new Error(`Source ${name} is already vendored — use pull to update it`);
-  }
+  rejectOverlap(sources, name);
 
   const checkout = mkdtempSync(path.join(tmpdir(), "polskills-clone-"));
   try {
     git(["clone", "--depth", "1", url, checkout]);
     const sha = git(["-C", checkout, "rev-parse", "HEAD"]).trim();
     const contentRoot = materializeContent(checkout, url, subpath);
-    carryRepoLicenseInto(checkout, contentRoot);
+    carryNearestLicenseInto(checkout, contentRoot);
 
-    const vendorDir = path.join(collectionRoot, "vendor", name);
+    const vendorDir = vendorDirOf(collectionRoot, name);
     rmSync(vendorDir, { recursive: true, force: true });
     mkdirSync(path.dirname(vendorDir), { recursive: true });
     cpSync(contentRoot, vendorDir, { recursive: true });
@@ -64,6 +72,53 @@ export function addSource(args: { collectionRoot: string; url: string; subpath?:
     return { source, vendorDir, license: findLicense(vendorDir) };
   } finally {
     rmSync(checkout, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Two sources may share a repo, but not a vendor subtree: one nested inside the other
+ * would mean vendoring the same files twice, under two pinned commits.
+ */
+function rejectOverlap(sources: Source[], name: string): void {
+  for (const source of sources) {
+    if (source.name === name) {
+      throw new Error(`Source ${name} is already vendored — use pull to update it`);
+    }
+    if (name.startsWith(`${source.name}/`)) {
+      throw new Error(`${name} already sits inside the vendored ${source.name} — pull ${source.name} instead`);
+    }
+    if (source.name.startsWith(`${name}/`)) {
+      throw new Error(`${name} would contain the vendored ${source.name} — remove ${source.name} first`);
+    }
+  }
+}
+
+export type RemovedSource = { source: Source; vendorDir: string };
+
+/** Stops tracking a source: its vendored tree goes, project copies of its assets stay. */
+export function removeSource(args: { collectionRoot: string; name: string }): RemovedSource {
+  const { collectionRoot, name } = args;
+  const sources = readSources(collectionRoot);
+  const source = sources.find((entry) => entry.name === name);
+  if (source === undefined) {
+    throw new Error(`Unknown source "${name}" — it is not recorded in sources.json`);
+  }
+
+  const vendorDir = vendorDirOf(collectionRoot, name);
+  rmSync(vendorDir, { recursive: true, force: true });
+  pruneEmptyDirsUpTo(path.dirname(vendorDir), path.join(collectionRoot, "vendor"));
+  writeSources(
+    collectionRoot,
+    sources.filter((entry) => entry !== source),
+  );
+  return { source, vendorDir };
+}
+
+/** Removing a subtree leaves the owner and repo directories that only held it. */
+function pruneEmptyDirsUpTo(dir: string, vendorRoot: string): void {
+  for (let current = dir; current.startsWith(vendorRoot + path.sep); current = path.dirname(current)) {
+    if (!existsSync(current) || readdirSync(current).length > 0) return;
+    rmdirSync(current);
   }
 }
 
@@ -86,7 +141,7 @@ export function pullSource(args: { collectionRoot: string; name: string }): Pull
   if (source === undefined) {
     throw new Error(`Unknown source "${name}" — it is not recorded in sources.json`);
   }
-  const vendorDir = path.join(collectionRoot, "vendor", name);
+  const vendorDir = vendorDirOf(collectionRoot, name);
 
   const checkout = mkdtempSync(path.join(tmpdir(), "polskills-pull-"));
   const discard = (): void => rmSync(checkout, { recursive: true, force: true });
@@ -102,7 +157,7 @@ export function pullSource(args: { collectionRoot: string; name: string }): Pull
       return { kind: "up-to-date", source };
     }
     const contentRoot = materializeContent(checkout, source.url, source.subpath);
-    carryRepoLicenseInto(checkout, contentRoot);
+    carryNearestLicenseInto(checkout, contentRoot);
     const diff = diffPaths({ collectionPath: vendorDir, projectPath: contentRoot });
     return {
       kind: "changed",
@@ -144,11 +199,19 @@ function materializeContent(checkout: string, url: string, subpath: string | und
   return contentRoot;
 }
 
-function carryRepoLicenseInto(checkout: string, contentRoot: string): void {
-  if (contentRoot === checkout || findLicense(contentRoot).kind !== "missing") return;
-  const license = findLicense(checkout);
-  if (license.kind === "found") {
-    cpSync(path.join(checkout, license.file), path.join(contentRoot, license.file));
+/**
+ * A vendored subtree rarely carries a license of its own — the nearest one above it governs it,
+ * whether that is the plugin directory it belongs to or the repo root.
+ */
+function carryNearestLicenseInto(checkout: string, contentRoot: string): void {
+  if (findLicense(contentRoot).kind !== "missing") return;
+  for (let dir = path.dirname(contentRoot); dir.startsWith(checkout); dir = path.dirname(dir)) {
+    const license = findLicense(dir);
+    if (license.kind === "found") {
+      cpSync(path.join(dir, license.file), path.join(contentRoot, license.file));
+      return;
+    }
+    if (dir === checkout) return;
   }
 }
 
@@ -168,30 +231,42 @@ function errorDetail(error: unknown): string {
 export function listSources(collectionRoot: string): { source: Source; license: LicenseInfo }[] {
   return readSources(collectionRoot).map((source) => ({
     source,
-    license: findLicense(path.join(collectionRoot, "vendor", source.name)),
+    license: findLicense(vendorDirOf(collectionRoot, source.name)),
   }));
+}
+
+export function vendorDirOf(collectionRoot: string, name: string): string {
+  return path.join(collectionRoot, "vendor", ...name.split("/"));
 }
 
 export function readSources(collectionRoot: string): Source[] {
   const file = path.join(collectionRoot, SOURCES_FILE);
   if (!existsSync(file)) return [];
   const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
-  if (!Array.isArray(parsed) || !parsed.every(isSource)) {
+  if (!Array.isArray(parsed) || !parsed.every(isStoredSource)) {
     throw new Error(`${file} is malformed — fix or delete it before continuing`);
   }
-  return parsed;
+  return parsed.map(({ url, subpath, sha }) => ({
+    name: sourceName(url, subpath),
+    url,
+    ...(subpath === undefined ? {} : { subpath }),
+    sha,
+  }));
 }
 
 function writeSources(collectionRoot: string, sources: Source[]): void {
-  writeFileSync(path.join(collectionRoot, SOURCES_FILE), `${JSON.stringify(sources, null, 2)}\n`);
+  const stored: StoredSource[] = sources.map(({ url, subpath, sha }) => ({
+    url,
+    ...(subpath === undefined ? {} : { subpath }),
+    sha,
+  }));
+  writeFileSync(path.join(collectionRoot, SOURCES_FILE), `${JSON.stringify(stored, null, 2)}\n`);
 }
 
-function isSource(value: unknown): value is Source {
+function isStoredSource(value: unknown): value is StoredSource {
   return (
     typeof value === "object" &&
     value !== null &&
-    "name" in value &&
-    typeof value.name === "string" &&
     "url" in value &&
     typeof value.url === "string" &&
     "sha" in value &&
@@ -200,7 +275,7 @@ function isSource(value: unknown): value is Source {
   );
 }
 
-function repoNameFrom(url: string): string {
+function sourceName(url: string, subpath: string | undefined): string {
   const segments = url
     .replace(/\.git$/, "")
     .split("/")
@@ -210,7 +285,18 @@ function repoNameFrom(url: string): string {
   if (repo === undefined || owner === undefined) {
     throw new Error(`Cannot derive an owner/repo name from "${url}"`);
   }
-  return `${owner}/${repo}`;
+  return subpath === undefined ? `${owner}/${repo}` : `${owner}/${repo}/${subpath}`;
+}
+
+/** Subpaths are relative and slash-separated, so that they compose into a source name. */
+function normalizeSubpath(subpath: string | undefined): string | undefined {
+  if (subpath === undefined) return undefined;
+  const segments = subpath.split(/[/\\]+/).filter((segment) => segment !== "" && segment !== ".");
+  if (segments.length === 0) return undefined;
+  if (segments.includes("..")) {
+    throw new Error(`Subpath "${subpath}" must stay inside the repo`);
+  }
+  return segments.join("/");
 }
 
 function findLicense(dir: string): LicenseInfo {

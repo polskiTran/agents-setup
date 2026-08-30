@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { entriesOf } from "./dir.ts";
+import { readSources, vendorDirOf } from "./sources.ts";
 
 export type AssetKind = "skill" | "agent";
 
@@ -27,13 +28,11 @@ export function discoverCollectionAssets(collectionRoot: string): CollectionAsse
     assets.push({ kind: "agent", name: path.basename(file, ".md"), owner: mine, path: file });
   }
 
-  const vendorRoot = path.join(collectionRoot, "vendor");
-  for (const owner of entriesOf(vendorRoot)) {
-    if (owner.type !== "dir") continue;
-    for (const repo of entriesOf(owner.path)) {
-      if (repo.type !== "dir") continue;
-      scanVendorTree(repo.path, { kind: "vendor", source: `${owner.name}/${repo.name}` }, assets);
-    }
+  // sources.json, not the directory shape, says where a vendored tree starts: a source may be a
+  // subtree of a repo, and then its vendor directory is nested arbitrarily deep.
+  for (const { name } of readSources(collectionRoot)) {
+    const dir = vendorDirOf(collectionRoot, name);
+    if (existsSync(dir)) scanVendorTree(dir, { kind: "vendor", source: name }, assets);
   }
   return assets;
 }

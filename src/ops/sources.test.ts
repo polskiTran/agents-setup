@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 
-import { addSource, listSources, parseUpstreamUrl, pullSource, readSources } from "./sources.ts";
+import { addSource, listSources, parseUpstreamUrl, pullSource, readSources, removeSource } from "./sources.ts";
 
 const temps: string[] = [];
 
@@ -16,6 +16,8 @@ function tempDir(prefix: string): string {
 
 function fixtureRepo(files: Record<string, string>): {
   url: string;
+  /** The owner/repo name addSource derives from the fixture's path. */
+  repoName: string;
   sha: string;
   commit: (files: Record<string, string>) => string;
 } {
@@ -33,7 +35,7 @@ function fixtureRepo(files: Record<string, string>): {
   };
   git("init");
   const sha = commit(files);
-  return { url: dir, sha, commit };
+  return { url: dir, repoName: `${path.basename(path.dirname(dir))}/${path.basename(dir)}`, sha, commit };
 }
 
 afterEach(() => {
@@ -72,6 +74,19 @@ test("vendors only the subpath subtree and copies the repo-root license in", () 
   expect(readSources(collection)[0]?.subpath).toBe("pstack");
 });
 
+test("a subtree takes the nearest license above it, not the repo root's", () => {
+  const collection = tempDir("polskills-collection-");
+  const upstream = fixtureRepo({
+    "LICENSE": "MIT License",
+    "team-kit/LICENSE": "Apache License 2.0",
+    "team-kit/skills/tdd/SKILL.md": "# tdd",
+  });
+
+  const added = addSource({ collectionRoot: collection, url: upstream.url, subpath: "team-kit/skills" });
+
+  expect(added.license).toEqual({ kind: "found", file: "LICENSE", summary: "Apache License 2.0" });
+});
+
 test("a subpath that is not a directory in the upstream fails without recording anything", () => {
   const collection = tempDir("polskills-collection-");
   const upstream = fixtureRepo({ "README.md": "hi" });
@@ -90,6 +105,97 @@ test("adding an already-vendored source throws", () => {
   expect(() => addSource({ collectionRoot: collection, url: upstream.url })).toThrow(
     /already vendored/,
   );
+});
+
+test("two subpaths of one repo vendor side by side, each pinned on its own", () => {
+  const collection = tempDir("polskills-collection-");
+  const upstream = fixtureRepo({
+    "pstack/uv/SKILL.md": "# uv",
+    "team-kit/skills/tdd/SKILL.md": "# tdd",
+  });
+
+  const first = addSource({ collectionRoot: collection, url: upstream.url, subpath: "pstack" });
+  const second = addSource({
+    collectionRoot: collection,
+    url: upstream.url,
+    subpath: "team-kit/skills",
+  });
+
+  expect(first.source.name).toBe(`${upstream.repoName}/pstack`);
+  expect(second.source.name).toBe(`${upstream.repoName}/team-kit/skills`);
+  expect(readFileSync(path.join(first.vendorDir, "uv", "SKILL.md"), "utf8")).toBe("# uv");
+  expect(readFileSync(path.join(second.vendorDir, "tdd", "SKILL.md"), "utf8")).toBe("# tdd");
+  expect(readSources(collection)).toHaveLength(2);
+});
+
+test("a subpath nested in an already-vendored source is refused, and vice versa", () => {
+  const collection = tempDir("polskills-collection-");
+  const upstream = fixtureRepo({ "pstack/uv/SKILL.md": "# uv" });
+
+  addSource({ collectionRoot: collection, url: upstream.url, subpath: "pstack" });
+  expect(() =>
+    addSource({ collectionRoot: collection, url: upstream.url, subpath: "pstack/uv" }),
+  ).toThrow(/already sits inside/);
+  expect(() => addSource({ collectionRoot: collection, url: upstream.url })).toThrow(
+    /would contain/,
+  );
+  expect(readSources(collection)).toHaveLength(1);
+});
+
+test("removing a source deletes its vendored tree and the directories that only held it", () => {
+  const collection = tempDir("polskills-collection-");
+  const upstream = fixtureRepo({
+    "pstack/uv/SKILL.md": "# uv",
+    "team-kit/skills/tdd/SKILL.md": "# tdd",
+  });
+  const kept = addSource({ collectionRoot: collection, url: upstream.url, subpath: "pstack" });
+  const doomed = addSource({
+    collectionRoot: collection,
+    url: upstream.url,
+    subpath: "team-kit/skills",
+  });
+
+  const removed = removeSource({ collectionRoot: collection, name: doomed.source.name });
+
+  expect(removed.source).toEqual(doomed.source);
+  expect(existsSync(doomed.vendorDir)).toBe(false);
+  expect(existsSync(path.dirname(doomed.vendorDir))).toBe(false);
+  expect(existsSync(kept.vendorDir)).toBe(true);
+  expect(readSources(collection)).toEqual([kept.source]);
+});
+
+test("removing frees the name, so the same subtree can be vendored again", () => {
+  const collection = tempDir("polskills-collection-");
+  const upstream = fixtureRepo({ "pstack/uv/SKILL.md": "# uv" });
+  addSource({ collectionRoot: collection, url: upstream.url, subpath: "pstack" });
+
+  removeSource({ collectionRoot: collection, name: `${upstream.repoName}/pstack` });
+  const readded = addSource({ collectionRoot: collection, url: upstream.url, subpath: "pstack" });
+
+  expect(readFileSync(path.join(readded.vendorDir, "uv", "SKILL.md"), "utf8")).toBe("# uv");
+  expect(readSources(collection)).toHaveLength(1);
+});
+
+test("removing an unknown source throws and leaves sources.json alone", () => {
+  const collection = tempDir("polskills-collection-");
+  const upstream = fixtureRepo({ "SKILL.md": "# solo" });
+  const added = addSource({ collectionRoot: collection, url: upstream.url });
+
+  expect(() => removeSource({ collectionRoot: collection, name: "nobody/nothing" })).toThrow(/Unknown source/);
+  expect(readSources(collection)).toEqual([added.source]);
+});
+
+test("a source name survives a hand-edited sources.json because it is derived", () => {
+  const collection = tempDir("polskills-collection-");
+  const upstream = fixtureRepo({ "pstack/uv/SKILL.md": "# uv" });
+  const added = addSource({ collectionRoot: collection, url: upstream.url, subpath: "pstack" });
+
+  writeFileSync(
+    path.join(collection, "sources.json"),
+    JSON.stringify([{ name: "stale/name", url: upstream.url, subpath: "pstack", sha: added.source.sha }]),
+  );
+
+  expect(readSources(collection)[0]?.name).toBe(added.source.name);
 });
 
 test("a source without a license lists as missing, not as an error", () => {

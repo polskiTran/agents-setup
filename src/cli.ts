@@ -41,6 +41,9 @@ const addableDisplay: Record<Exclude<AssetSyncState, "in-sync">, { prefix: strin
   differs: { prefix: `${stateGlyph("differs")} `, hint: "adding overwrites the project copy" },
 };
 
+// A project copy that came from the collection, so it knows which source it came from.
+type TrackedEntry = Extract<StatusEntry, { asset: CollectionAsset; projectPath: string }>;
+
 const nfFaBook = "\uf02d";
 const nfFaUsers = "\uf0c0";
 const kindSymbols: Record<AssetKind, string> = { skill: nfFaBook, agent: nfFaUsers };
@@ -332,7 +335,9 @@ async function runAddAssets(): Promise<void> {
 
 async function runRemoveAssets(): Promise<void> {
   const entries = projectStatus({ collectionRoot, projectDir });
-  const added = entries.filter((entry) => entry.state === "in-sync" || entry.state === "differs");
+  const added = entries.flatMap((entry): TrackedEntry[] =>
+    entry.state === "in-sync" || entry.state === "differs" ? [entry] : [],
+  );
   const projectOnly = entries.filter((entry) => entry.state === "project-only");
   if (added.length === 0) {
     log.info(
@@ -347,28 +352,47 @@ async function runRemoveAssets(): Promise<void> {
       `${countPhrase(projectOnly)} exist only in this project and are not listed. Copy them into my collection first, from Review differences.`,
     );
   }
-  const chosen = await multiselect({
-    message: "Choose what to remove from this project. Space selects, enter confirms",
-    options: added.map((entry, index) => ({
-      value: index,
-      label: `${stateGlyph(entry.state)} ${entry.name}  (${entry.kind})`,
-      hint:
-        entry.state === "differs"
-          ? "deleting also deletes the local changes"
-          : "matches my collection",
-    })),
-    maxItems: 12,
-    required: false,
-  });
-  if (isCancel(chosen) || chosen.length === 0) return;
-  const removed = chosen.flatMap((index) => {
-    const entry = added[index];
-    if (entry === undefined) return [];
-    removeAssetFromProject({ projectDir, kind: entry.kind, name: entry.name });
-    return [entry];
-  });
-  log.info(`Removed ${countPhrase(removed)}.`);
-  renderStatus();
+  const bySource = new Map<string, TrackedEntry[]>();
+  for (const entry of added) {
+    const label = ownerLabel(entry.asset.owner);
+    bySource.set(label, [...(bySource.get(label) ?? []), entry]);
+  }
+
+  while (true) {
+    const source = await select({
+      message: "Remove which source's copies?",
+      options: [
+        ...[...bySource.entries()].map(([label, group]) => ({
+          value: label,
+          label,
+          hint: removalHint(group),
+        })),
+        { value: "", label: "Back" },
+      ],
+    });
+    if (isCancel(source) || source === "") return;
+    const available = bySource.get(source);
+    if (available === undefined) continue;
+
+    if (available.some((entry) => entry.state === "differs")) {
+      log.info(`${stateGlyph("differs")} out of sync — removing also deletes the local changes`);
+    }
+    const chosen = await multiselect<TrackedEntry>({
+      message: `Choose what to remove from this project. Space selects, enter confirms`,
+      options: available.map((entry) => ({
+        value: entry,
+        label: `${stateGlyph(entry.state)} ${entry.name}  (${entry.kind})`,
+      })),
+      maxItems: 12,
+      required: false,
+    });
+    if (isCancel(chosen)) return;
+    if (chosen.length === 0) continue;
+    for (const entry of chosen) removeAssetFromProject({ projectDir, kind: entry.kind, name: entry.name });
+    log.info(`Removed ${countPhrase(chosen)} that came from ${source}.`);
+    renderStatus();
+    return;
+  }
 }
 
 async function runResolve(): Promise<void> {
@@ -400,7 +424,7 @@ async function runResolve(): Promise<void> {
   }
 }
 
-async function resolveDiffers(entry: StatusEntry & { state: "differs" }): Promise<void> {
+async function resolveDiffers(entry: TrackedEntry): Promise<void> {
   showDiff(entry.asset.path, entry.projectPath);
   const mine = entry.asset.owner.kind === "mine";
   const action = await select({
@@ -504,6 +528,11 @@ function sourceHint(candidates: { state: AssetSyncState }[]): string {
     ...(fresh === 0 ? [] : [`${fresh} new`]),
     ...(outOfSync === 0 ? [] : [`${outOfSync} out of sync`]),
   ].join(", ");
+}
+
+function removalHint(entries: TrackedEntry[]): string {
+  const outOfSync = entries.filter((entry) => entry.state === "differs").length;
+  return outOfSync === 0 ? countPhrase(entries) : `${countPhrase(entries)}, ${outOfSync} out of sync`;
 }
 
 function countPhrase(items: { kind: AssetKind }[]): string {

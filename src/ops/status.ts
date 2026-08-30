@@ -4,9 +4,9 @@ import path from "node:path";
 import { discoverCollectionAssets, type AssetKind, type CollectionAsset } from "./catalog.ts";
 import { entriesOf } from "./dir.ts";
 
+// An asset is either in both places — in sync or not — or in only one of them.
 export type StatusEntry =
-  | { state: "in-sync"; kind: AssetKind; name: string; asset: CollectionAsset; projectPath: string }
-  | { state: "differs"; kind: AssetKind; name: string; asset: CollectionAsset; projectPath: string }
+  | { state: "in-sync" | "differs"; kind: AssetKind; name: string; asset: CollectionAsset; projectPath: string }
   | { state: "collection-only"; kind: AssetKind; name: string; asset: CollectionAsset }
   | { state: "project-only"; kind: AssetKind; name: string; projectPath: string };
 

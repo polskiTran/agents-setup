@@ -55,9 +55,13 @@ if (!process.stdin.isTTY) {
   process.exit(0);
 }
 
-while (true) {
-  const action = await select({
-    message: "Actions",
+// Actions are grouped by what they touch: the project you are standing in, or
+// the collection that feeds every project. Each group keeps its own cursor so
+// running several actions in a row does not mean walking the menu each time.
+const menus = {
+  project: {
+    label: "This project",
+    hint: "what is here, and what to add, remove, or resolve",
     options: [
       { value: "status", label: "Project status", hint: "what this project has and how it compares" },
       { value: "all-assets", label: "Show everything", hint: "the same view, plus what is not added yet" },
@@ -65,24 +69,63 @@ while (true) {
       { value: "add-assets", label: "Add to project", hint: "copy skills and agents from my collection" },
       { value: "remove-assets", label: "Remove from project", hint: "delete skills and agents from this project" },
       { value: "init", label: "Set up project", hint: "creates .agents/skills, .agents/agents, and the .claude symlinks" },
+    ],
+  },
+  collection: {
+    label: "My collection",
+    hint: "the upstream repos it is built from",
+    options: [
       { value: "add-upstream", label: "Add upstream", hint: "track a skills repo by URL" },
       { value: "pull-upstream", label: "Pull upstream", hint: "review and apply upstream changes" },
       { value: "remove-upstream", label: "Remove upstream", hint: "stop tracking a repo and delete its vendored copy" },
       { value: "list-sources", label: "List upstreams", hint: "tracked upstreams and their licenses" },
-      { value: "exit", label: "Exit" },
+    ],
+  },
+} as const;
+
+type Radius = keyof typeof menus;
+type Action = (typeof menus)[Radius]["options"][number]["value"];
+
+const run: Record<Action, () => void | Promise<void>> = {
+  status: renderStatus,
+  "all-assets": renderAllAssets,
+  resolve: runResolve,
+  "add-assets": runAddAssets,
+  "remove-assets": runRemoveAssets,
+  init: runInit,
+  "add-upstream": runAddUpstream,
+  "pull-upstream": runPullUpstream,
+  "remove-upstream": runRemoveUpstream,
+  "list-sources": runListSources,
+};
+
+let radiusCursor: Radius | "exit" = "project";
+const actionCursor: Record<Radius, Action> = { project: "status", collection: "add-upstream" };
+
+while (true) {
+  // Annotated because `initialValue` reads a cursor this same statement writes.
+  const radius: Radius | "exit" | symbol = await select<Radius | "exit">({
+    message: "Actions",
+    initialValue: radiusCursor,
+    options: [
+      ...Object.entries(menus).map(([value, menu]) => ({ value: value as Radius, label: menu.label, hint: menu.hint })),
+      { value: "exit" as const, label: "Exit" },
     ],
   });
-  if (isCancel(action) || action === "exit") break;
-  if (action === "status") renderStatus();
-  if (action === "all-assets") renderAllAssets();
-  if (action === "resolve") await runResolve();
-  if (action === "add-assets") await runAddAssets();
-  if (action === "remove-assets") await runRemoveAssets();
-  if (action === "init") runInit();
-  if (action === "add-upstream") await runAddUpstream();
-  if (action === "pull-upstream") await runPullUpstream();
-  if (action === "remove-upstream") await runRemoveUpstream();
-  if (action === "list-sources") runListSources();
+  if (isCancel(radius) || radius === "exit") break;
+  radiusCursor = radius;
+
+  const menu = menus[radius];
+  while (true) {
+    const action = await select<Action | "back">({
+      message: menu.label,
+      initialValue: actionCursor[radius],
+      options: [...menu.options, { value: "back" as const, label: "Back" }],
+    });
+    if (isCancel(action) || action === "back") break;
+    actionCursor[radius] = action;
+    await run[action]();
+  }
 }
 
 outro("Done.");

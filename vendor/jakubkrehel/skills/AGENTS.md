@@ -44,11 +44,11 @@ Those three overlap, and that overlap is the price of a skill that works when in
 
 A user-invoked skill may invoke model-invoked skills, but it can never reach another user-invoked skill. That rule decides the setting; it is not a preference:
 
-- `interface-review`, `variant`, `break` and `explain-interface` are the user-invoked skills. Each carries `disable-model-invocation: true` in its frontmatter **and** `policy.allow_implicit_invocation: false` in its `agents/openai.yaml`. Those are the Claude Code and Codex halves of the same switch and must be set together, or the skill behaves differently per harness. Their `description` is human-facing: a one-line summary with no trigger list, since nothing but a person can match against it.
+- `interface-review`, `variant`, `break` and `explain-interface` are the user-invoked skills. Each carries `disable-model-invocation: true` in its frontmatter **and** `policy.allow_implicit_invocation: false` in its `agents/openai.yaml`. Those are the Claude Code and Codex halves of the same switch and must be set together, or the skill behaves differently per harness.
 - `variant` is user-invoked because a design exploration is never something to start on someone's behalf. It writes throwaway code and then asks a question only a person can answer, so an agent firing it unprompted produces work nobody asked for and a harness nobody deletes.
 - `break` is user-invoked for the same reason as `variant`: it writes a throwaway harness, and an agent firing it after every component it touches would litter the repo with test pages.
 - `explain-interface` is user-invoked because studying someone else's interface is only ever something a person asks for. Pasting a URL is not a request to analyse it, and a skill firing on every link would turn each mention of a site into a report.
-- Every other skill is model-invoked and keeps a trigger list, because something must reach it: `better-interface` routes to every domain skill, and `interface-review` hands its review up to `better-interface`.
+- Every other skill is model-invoked, because something must reach it: `better-interface` routes to every domain skill, and `interface-review` hands its review up to `better-interface`.
 - `better-interface` therefore cannot start `interface-review`. Where it would want to, it asks the user to run it. Making `better-interface` user-invoked too would sever the upward handoff and force `interface-review` to restate severity, the cap, the format and the verdict.
 
 ### Rule ownership
@@ -81,7 +81,7 @@ When a concern crosses domains, keep the rule in the owner above and let other s
 - Principles are prescriptive and specific: exact CSS properties, exact values (e.g. scale `0.25` → `1`, blur `4px` → `0px`), not vague advice.
 - Match the degree of prescription to the decision: requirements may be unconditional, while design heuristics name the context and escape conditions before giving exact recipe values.
 - Skills instruct agents to match the target project's existing styling system (Tailwind vs. plain CSS vs. CSS-in-JS) rather than impose one.
-- Frontmatter `description` is how a skill gets found. Update its triggers whenever the skill's scope changes. It loads on every turn, so it earns harder pruning than the body: one trigger per distinct branch and never two phrasings of the same one. Leave out identity the body already carries, such as which skills it coordinates or which modes it supports.
+- Frontmatter `description` is how a skill gets found, and it is one or two plain sentences saying what the skill does for the user. It loads on every turn, so it earns harder pruning than the body. No trigger list: a keyword pile is a worse match signal than a clear sentence, and it goes stale the moment the skill's scope moves. The wording is the same as the skill's line in `README.md`, so changing one means changing both.
 - Skills that own a domain use the `better-*` prefix. A user-invoked review entry point may drop it when a plainer name reads better on the command line, as `interface-review` does.
 - A skill's name appears in three places: its directory, its frontmatter `name` and `display_name` in its `agents/openai.yaml`. Renaming means changing all three, then `grep`ing for the old name to confirm nothing survived.
 - Prefer counts and lists that cannot go stale. Say "every skill in this repository" rather than a number the next skill invalidates.
@@ -91,6 +91,6 @@ When a concern crosses domains, keep the rule in the owner above and let other s
 Four checks after an edit, since prose drifts back toward the mean:
 
 - **No sentence over 30 words**, counting a code span as one word. A ceiling, not an average. Averages are the wrong instrument here: aiming for a low mean produces choppy prose, and the well-written references this collection was measured against average about 14 words with a long tail. What makes a file hard to read is the individual 40-word sentence carrying four clauses, so split those and leave the rest alone.
-- **Around 20 triggers per description.** Two words for one branch is one branch written twice.
+- **A description that matches its `README.md` line.** Two wordings of one skill is one skill described twice.
 - **One statement of each rule.** Before adding a sentence, check whether the file already says it somewhere else. The reflex to restate a boundary "for clarity" produced four copies of one ownership line in `better-interface`. It also produced a mistake table whose every row repeated the principle above it.
 - **A pruning pass, not a word ceiling.** No reference collection caps skill length; `anthropics/skills` runs to nearly 10,000 words in a single file. Read each sentence and ask what it changes. A sentence that cannot be restated as an instruction, a fact, or a number is cut. A sentence that could appear unchanged in another project's docs says nothing about this one. Prose about this repository's own filing decisions belongs in this file, never in a skill.

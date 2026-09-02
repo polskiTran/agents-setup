@@ -1,6 +1,6 @@
 ---
 name: break
-description: Answers "does this survive?" for one component. Renders it on a page in every state real use can put it in, and hands that page over as a visual report of what broke.
+description: Renders a component you choose in every state and scenario on a temporary page and stress tests it.
 disable-model-invocation: true
 ---
 

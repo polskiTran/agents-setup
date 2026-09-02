@@ -4,45 +4,33 @@
 
 [![skills.sh](https://skills.sh/b/jakubkrehel/skills)](https://skills.sh/jakubkrehel/skills)
 
-A collection of agent skills that help you build a great interface. They cover UI, typography, colors, accessibility, layout, product writing and more.
+A collection of agent skills that cover UI, typography, colors, accessibility, layout, product writing and help you build a great interface.
 
-## Skills
+These skills are contain topics that I write about on [my personal website](https://jakub.kr/) and my design engineering magazine, [Interfaces](https://interfaces.dev/).
 
-- [**better-interface**](skills/better-interface/SKILL.md): A cross-discipline interface review that coordinates every skill below.
-- [**interface-review**](skills/interface-review/SKILL.md): A review of your uncommitted changes, current branch or a pull request against every skill below. User-invoked.
-- [**variant**](skills/variant/SKILL.md): Builds several genuinely different versions of one piece of UI behind a picker, so you can flip between them in the real page and promote the one that wins. User-invoked.
-- [**break**](skills/break/SKILL.md): Renders one component on a page in every state real use can put it in and hands that page over as a visual report of what broke. User-invoked.
-- [**explain-interface**](skills/explain-interface/SKILL.md): Ask how something was built. Point it at a URL or a screenshot, name the thing you're curious about, and it finds the layers behind the effect and explains what each one does. User-invoked.
-- [**better-ui**](skills/better-ui/SKILL.md): Design engineering details that make interfaces feel polished: border radius, shadows, animations and micro-interactions.
-- [**better-typography**](skills/better-typography/SKILL.md): Choosing and pairing typefaces, type scales, spacing, wrapping and truncation.
-- [**better-colors**](skills/better-colors/SKILL.md): Color systems: building and naming palettes, applying color with meaning, contrast and theming.
-- [**better-accessibility**](skills/better-accessibility/SKILL.md): Focus states, keyboard support, ARIA, forms, screen readers, hit areas and motion.
-- [**better-layout**](skills/better-layout/SKILL.md): Layout structure, grouping, alignment, reading order, progressive disclosure and adaptive breakpoints.
-- [**better-writing**](skills/better-writing/SKILL.md): UX writing and interface copy, from button labels to errors, settings and empty states.
+## Skills that help build great interfaces
+
+- [**better-interface**](skills/better-interface/SKILL.md): Combines all of the `better-*` skills into a single review.
+- [**better-ui**](skills/better-ui/SKILL.md): Improves UI in your project across the board. Covers things like **concentric border radius**, **optical alignment**, **contextual icons**, **hit areas**, **animation** and more.
+- [**better-typography**](skills/better-typography/SKILL.md): Improves type in your project. Covers **type scale**, **spacing**, **sizing**, **variable fonts**, **OpenType features**, **wrapping**, **truncation** and more.
+- [**better-colors**](skills/better-colors/SKILL.md): Helps you build a color system and answer anything about color in your project. You can **generate palettes**, **use semantic tokens**, **convert between formats**, **check contrast** and more.
+- [**better-accessibility**](skills/better-accessibility/SKILL.md): Helps your project comply with accessibility standards and best practices.
+- [**better-layout**](skills/better-layout/SKILL.md): Helps with **grouping**, **alignment**, **reading order** and other details that make a great layout.
+- [**better-writing**](skills/better-writing/SKILL.md): Focuses on improving and product copy in your project and making it consistent.
+- [**interface-review**](skills/interface-review/SKILL.md): Reviews your work across multiple categories like **UI**, **typography**, **layout**, **color**, **writing** and **accessibility** and gives you a detailed analysis of the findings. User-invoked.
+- [**explain-interface**](skills/explain-interface/SKILL.md): Helps you figure out how an animation, design or a piece of UI was built on the web. User-invoked.
+- [**break**](skills/break/SKILL.md): Renders a component you choose in **every state and scenario** on a temporary page and stress tests it. User-invoked.
+- [**variant**](skills/variant/SKILL.md): Builds multiple **variants** of a component you're working on and helps you iterate. User-invoked.
 
 ## Install
-
-Both methods install the same skills. They differ in what you type to run one, so pick a method and use its names.
-
-### CLI
-
-Works in Claude Code, Codex, Opencode and other agents. You can choose which skills to install or install all of them.
 
 ```bash
 npx skills add jakubkrehel/skills
 ```
 
-Skills installed this way keep their plain names, so the change review runs as `/interface-review`.
-
-### Claude Code plugin
-
-Installs every skill in this repository together and updates in place. Run these inside Claude Code:
+## Claude Code plugin
 
 ```text
 /plugin marketplace add jakubkrehel/skills
 /plugin install interfaces@interfaces
 ```
-
-Plugin skills are namespaced under the plugin, so the change review runs as `/interfaces:interface-review` and variants as `/interfaces:variant`.
-
-To update later, run `/plugin update interfaces@interfaces` and restart.

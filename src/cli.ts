@@ -16,6 +16,9 @@ import { addAssetToProject, initProject, removeAssetFromProject } from "./ops/pr
 import { adoptIntoMine, diffPaths, writeBackToCollection } from "./ops/sync.ts";
 import { discoverCollectionAssets, type AssetKind, type CollectionAsset, type Owner } from "./ops/catalog.ts";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 const collectionRoot = findCollectionRoot(import.meta.dirname);
 const projectDir = process.cwd();
@@ -477,12 +480,25 @@ function showDiff(collectionPath: string, projectPath: string): void {
     log.info("The files are identical.");
     return;
   }
-  try {
-    const result = spawnSync("hunk", [], { input: plain, stdio: ["pipe", "inherit", "inherit"] });
-    if (result.status === 0) return;
-  } catch {
-  }
+  if (viewInHunk(plain)) return;
   process.stdout.write(diffPaths({ collectionPath, projectPath, color: process.stdout.isTTY === true }));
+}
+
+/**
+ * Opens a patch in Hunk's TUI, returning false when Hunk is not installed so the
+ * caller can fall back to a plain diff. The patch goes through a temp file rather
+ * than stdin: Hunk needs the terminal as its own stdin to read keystrokes.
+ */
+function viewInHunk(patch: string): boolean {
+  if (!process.stdout.isTTY) return false;
+  const patchFile = path.join(mkdtempSync(path.join(tmpdir(), "agents-setup-diff-")), "changes.patch");
+  try {
+    writeFileSync(patchFile, patch);
+    const result = spawnSync("hunk", ["patch", patchFile], { stdio: "inherit" });
+    return result.error === undefined;
+  } finally {
+    rmSync(path.dirname(patchFile), { recursive: true, force: true });
+  }
 }
 
 function renderStatus(): void {

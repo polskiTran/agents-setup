@@ -1,1 +1,1 @@
-/tmp/polskills-clone-Jpy9oK/CLAUDE.md
+/private/var/folders/1t/l0xp3p315vv8n_nvjtyw8r6h0000gn/T/polskills-pull-Rde2z3/CLAUDE.md

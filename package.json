@@ -7,9 +7,6 @@
   "engines": {
     "node": ">=22.18"
   },
-  "bin": {
-    "polskills": "./dist/cli.js"
-  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "prepare": "tsc -p tsconfig.build.json",

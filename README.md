@@ -33,44 +33,35 @@ my-project/
 
 Because each asset is a copy, a project can drift from the collection. You can write a changed copy back into `skills/` or `agents/`. A changed vendor copy has to be adopted into `skills/` or `agents/` first, since `vendor/` stays as fetched.
 
-## Bootstrap
+## Install and update
+
+One command, in the project you want to set up:
 
 ```bash
-git clone https://github.com/polskiTran/agents-setup.git
-cd agents-setup
-pnpm i
-pnpm add -g link:.   # pnpm 11 replacement for the removed `pnpm link --global`
+curl -fsSL https://raw.githubusercontent.com/polskiTran/agents-setup/main/bin/polskills | sh
 ```
 
-Then run `polskills` from any project directory.
+It needs `git` and Node 22.18+. The first run clones this repo into `~/.polskills`, builds it, and links
+`~/.local/bin/polskills`. After that, run `polskills` from any project. Each run fast-forwards
+`~/.polskills` first, and rebuilds only if the commit changed. So the menu always shows the latest collection.
 
-Or you can run directly without the global link
+Writes back to the collection (Keep the project version, Copy into my collection, upstream changes) land
+in `~/.polskills`. Commit and push them from there, or the next environment won't have them.
+
+To use a clone you already work in, point the launcher at it:
 
 ```bash
-cd ~/my-project
-pnpm i
-node ~/src/agents-setup/dist/cli.js
+export POLSKILLS_HOME=~/src/agents-setup
 ```
 
-## Update
-
-```bash
-cd agents-setup
-git pull
-pnpm i   # the prepare hook rebuilds dist/
-```
-
-Every install method above runs `dist/` from this clone, so the rebuild takes effect at once.
+The launcher only fast-forwards. If the clone has diverged, it warns and runs the clone as it is.
 
 ## Uninstall
 
-If you linked the package globally, unlink it.
-
 ```bash
-pnpm remove -g polskills
+rm ~/.local/bin/polskills
+rm -rf ~/.polskills
 ```
-
-Otherwise remove the symlink or the alias. Then delete the clone.
 
 ## Skills upstreams
 - https://github.com/mattpocock/skills

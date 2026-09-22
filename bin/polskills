@@ -1,0 +1,63 @@
+#!/bin/sh
+# Bootstraps, updates, and runs polskills in the current directory.
+#
+#   curl -fsSL https://raw.githubusercontent.com/polskiTran/agents-setup/main/bin/polskills | sh
+#
+# The first run clones the collection into $POLSKILLS_HOME (default ~/.polskills) and links
+# this script as ~/.local/bin/polskills. Every run fast-forwards that checkout, rebuilds when
+# its commit changed, then opens the menu. Point POLSKILLS_HOME at an existing clone to use it.
+# Everything lives in main so a pull that rewrites this file cannot affect the running copy.
+
+main() {
+  repo=https://github.com/polskiTran/agents-setup.git
+  home=${POLSKILLS_HOME:-$HOME/.polskills}
+
+  for tool in git node; do
+    command -v "$tool" >/dev/null || fail "$tool is required"
+  done
+  node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 18) ? 0 : 1)' ||
+    fail "Node 22.18 or newer is required (found $(node --version))"
+
+  if [ -d "$home/.git" ]; then
+    git -C "$home" pull --ff-only --quiet ||
+      say "could not update $home, running the checkout as it is"
+  else
+    say "cloning the collection into $home"
+    git clone --quiet "$repo" "$home" || fail "clone failed"
+  fi
+
+  head=$(git -C "$home" rev-parse HEAD)
+  if [ "$(cat "$home/dist/.head" 2>/dev/null)" != "$head" ]; then
+    say "building $(git -C "$home" rev-parse --short HEAD)"
+    if command -v pnpm >/dev/null; then
+      (cd "$home" && pnpm install --frozen-lockfile --config.confirmModulesPurge=false --silent)
+    else
+      (cd "$home" && npm install --no-package-lock --silent)
+    fi || fail "build failed"
+    printf '%s\n' "$head" >"$home/dist/.head"
+  fi
+
+  link_launcher
+
+  # Piped through `curl | sh`, stdin is the script, so the menu reads the terminal instead.
+  if [ ! -t 0 ] && (: </dev/tty) 2>/dev/null; then
+    exec node "$home/dist/cli.js" "$@" </dev/tty
+  fi
+  exec node "$home/dist/cli.js" "$@"
+}
+
+link_launcher() {
+  bin_dir=$HOME/.local/bin
+  [ -e "$bin_dir/polskills" ] && return
+  mkdir -p "$bin_dir" && ln -s "$home/bin/polskills" "$bin_dir/polskills" || return
+  say "linked $bin_dir/polskills, so next time run polskills"
+  case ":$PATH:" in
+    *":$bin_dir:"*) ;;
+    *) say "add $bin_dir to PATH to run it by name" ;;
+  esac
+}
+
+say() { printf 'polskills: %s\n' "$1" >&2; }
+fail() { say "$1"; exit 1; }
+
+main "$@"

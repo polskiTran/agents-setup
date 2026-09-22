@@ -46,15 +46,19 @@ main() {
   exec node "$home/dist/cli.js" "$@"
 }
 
+# Links the launcher once, then checks on every run that `polskills` on PATH resolves to it.
 link_launcher() {
   bin_dir=$HOME/.local/bin
-  [ -e "$bin_dir/polskills" ] && return
-  mkdir -p "$bin_dir" && ln -s "$home/bin/polskills" "$bin_dir/polskills" || return
-  say "linked $bin_dir/polskills, so next time run polskills"
-  case ":$PATH:" in
-    *":$bin_dir:"*) ;;
-    *) say "add $bin_dir to PATH to run it by name" ;;
-  esac
+  if [ ! -e "$bin_dir/polskills" ]; then
+    mkdir -p "$bin_dir" && ln -s "$home/bin/polskills" "$bin_dir/polskills" || return
+    say "linked $bin_dir/polskills, so next time run polskills"
+  fi
+  found=$(command -v polskills)
+  if [ -z "$found" ]; then
+    say "add $bin_dir to PATH to run it by name"
+  elif [ "$found" != "$bin_dir/polskills" ]; then
+    say "$found shadows $bin_dir/polskills; remove it (an old global link: pnpm remove -g polskills)"
+  fi
 }
 
 say() { printf 'polskills: %s\n' "$1" >&2; }
